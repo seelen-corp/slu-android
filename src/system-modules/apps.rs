@@ -1,12 +1,14 @@
 //! Installed-apps system module: get the current list, and subscribe to
 //! changes (install/uninstall/update) via a JNI-registered BroadcastReceiver.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
 
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
-use jni::{JNIEnv, JavaVM};
-use slint::android::AndroidApp;
+use jni::JNIEnv;
+use jni::objects::{JClass, JObject, JString, JValue};
+
+use crate::error::Result;
+use crate::system_modules::android_ctx;
 
 /// The Java package/class of the BroadcastReceiver declared in
 /// `android/app/src/main/java/com/seelen/slu_launcher/PackageChangeReceiver.java`.
@@ -20,75 +22,25 @@ pub struct AppInfo {
 
 pub type SubscriptionId = u64;
 
-struct AndroidCtx {
-    vm: JavaVM,
-    activity: GlobalRef,
-    class_loader: GlobalRef,
-}
-
-// Safety: the JavaVM and GlobalRef are both designed to be shared across
-// threads; JNI itself requires attaching per-thread before use.
-unsafe impl Send for AndroidCtx {}
-unsafe impl Sync for AndroidCtx {}
-
-static CTX: OnceLock<AndroidCtx> = OnceLock::new();
 static NEXT_SUBSCRIPTION_ID: AtomicU64 = AtomicU64::new(1);
 static SUBSCRIBERS: Mutex<Vec<(SubscriptionId, Box<dyn Fn() + Send + 'static>)>> =
     Mutex::new(Vec::new());
 
-/// Must be called once from `android_main`, before any other function in
-/// this module. Stores the JVM/Activity handles and registers the
-/// BroadcastReceiver used to detect package changes.
-pub fn init(app: &AndroidApp) {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
-        .expect("failed to obtain JavaVM");
-    let activity_obj = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
-
-    let (activity, class_loader) = {
-        let mut env = vm
-            .attach_current_thread()
-            .expect("failed to attach JNI thread");
-        let activity = env
-            .new_global_ref(&activity_obj)
-            .expect("failed to create global ref to activity");
-
-        let class_loader_obj = env
-            .call_method(
-                activity.as_obj(),
-                "getClassLoader",
-                "()Ljava/lang/ClassLoader;",
-                &[],
-            )
-            .expect("Activity.getClassLoader failed")
-            .l()
-            .expect("getClassLoader did not return an object");
-        let class_loader = env
-            .new_global_ref(&class_loader_obj)
-            .expect("failed to create global ref to class loader");
-
-        register_package_receiver(&mut env, activity.as_obj(), class_loader.as_obj());
-        (activity, class_loader)
-    };
-
-    CTX.set(AndroidCtx {
-        vm,
-        activity,
-        class_loader,
-    })
-    .ok();
+/// Must be called once from `android_main`, after `android_ctx::init`.
+/// Registers the BroadcastReceiver used to detect package changes.
+pub fn init() -> Result<()> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    register_package_receiver(&mut env, ctx.activity.as_obj(), ctx.class_loader.as_obj())?;
+    Ok(())
 }
 
 /// Synchronously queries the PackageManager for every launchable app for the
 /// current user, sorted by title.
-pub fn get_installed_apps() -> Vec<AppInfo> {
-    let ctx = CTX
-        .get()
-        .expect("apps::init must be called before apps::get_installed_apps");
-    let mut env = ctx
-        .vm
-        .attach_current_thread()
-        .expect("failed to attach JNI thread");
-    query_launchable_apps(&mut env, ctx.activity.as_obj()).expect("failed to query installed apps")
+pub fn get_installed_apps() -> Result<Vec<AppInfo>> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    query_launchable_apps(&mut env, ctx.activity.as_obj())
 }
 
 /// Registers a callback invoked whenever the installed-apps set changes
@@ -126,7 +78,7 @@ fn load_app_class<'local>(
     env: &mut JNIEnv<'local>,
     class_loader: &JObject,
     binary_name: &str,
-) -> jni::errors::Result<JClass<'local>> {
+) -> Result<JClass<'local>> {
     let dotted_name = binary_name.replace('/', ".");
     let name = env.new_string(dotted_name)?;
     let class = env
@@ -140,56 +92,48 @@ fn load_app_class<'local>(
     Ok(class.into())
 }
 
-fn register_package_receiver(env: &mut JNIEnv, activity: &JObject, class_loader: &JObject) {
-    let receiver_class = load_app_class(env, class_loader, RECEIVER_CLASS)
-        .expect("PackageChangeReceiver class not found");
-    let receiver = env
-        .new_object(receiver_class, "()V", &[])
-        .expect("failed to instantiate PackageChangeReceiver");
+fn register_package_receiver(
+    env: &mut JNIEnv,
+    activity: &JObject,
+    class_loader: &JObject,
+) -> Result<()> {
+    let receiver_class = load_app_class(env, class_loader, RECEIVER_CLASS)?;
+    let receiver = env.new_object(receiver_class, "()V", &[])?;
 
-    let filter_class = env
-        .find_class("android/content/IntentFilter")
-        .expect("IntentFilter class not found");
-    let filter = env
-        .new_object(filter_class, "()V", &[])
-        .expect("failed to instantiate IntentFilter");
+    let filter_class = env.find_class("android/content/IntentFilter")?;
+    let filter = env.new_object(filter_class, "()V", &[])?;
 
     for action in [
         "android.intent.action.PACKAGE_ADDED",
         "android.intent.action.PACKAGE_REMOVED",
         "android.intent.action.PACKAGE_REPLACED",
     ] {
-        let action_str = env.new_string(action).unwrap();
+        let action_str = env.new_string(action)?;
         env.call_method(
             &filter,
             "addAction",
             "(Ljava/lang/String;)V",
             &[JValue::Object(&action_str)],
-        )
-        .expect("IntentFilter.addAction failed");
+        )?;
     }
-    let scheme = env.new_string("package").unwrap();
+    let scheme = env.new_string("package")?;
     env.call_method(
         &filter,
         "addDataScheme",
         "(Ljava/lang/String;)V",
         &[JValue::Object(&scheme)],
-    )
-    .expect("IntentFilter.addDataScheme failed");
+    )?;
 
     env.call_method(
         activity,
         "registerReceiver",
         "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;",
         &[JValue::Object(&receiver), JValue::Object(&filter)],
-    )
-    .expect("Context.registerReceiver failed");
+    )?;
+    Ok(())
 }
 
-fn query_launchable_apps(
-    env: &mut JNIEnv,
-    activity: &JObject,
-) -> jni::errors::Result<Vec<AppInfo>> {
+fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<AppInfo>> {
     let pm = env
         .call_method(
             activity,

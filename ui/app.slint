@@ -1,0 +1,19 @@
+import { HomePage } from "pages/home.slint";
+import { ConfigPage } from "pages/config.slint";
+
+export component MainWindow inherits Window {
+    in property <[string]> app_titles: [];
+    callback open-settings();
+
+    HomePage {
+        app_titles: root.app_titles;
+        top-inset: root.safe-area-insets.top;
+        open-settings => { root.open-settings(); }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    ConfigPage {
+        top-inset: root.safe-area-insets.top;
+    }
+}

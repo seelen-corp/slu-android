@@ -1,0 +1,29 @@
+import { ListView, Button } from "std-widgets.slint";
+
+export component HomePage inherits Rectangle {
+    in property <[string]> app_titles: [];
+    in property <length> top-inset: 0px;
+    callback open-settings();
+
+    VerticalLayout {
+        padding-top: root.top-inset;
+
+        HorizontalLayout {
+            padding: 8px;
+            alignment: end;
+
+            Button {
+                text: "Settings";
+                clicked => { root.open-settings(); }
+            }
+        }
+
+        ListView {
+            for title in app_titles: Text {
+                text: title;
+                font-size: 18px;
+                color: black;
+            }
+        }
+    }
+}

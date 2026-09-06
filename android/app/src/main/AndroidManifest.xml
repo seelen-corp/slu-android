@@ -24,15 +24,16 @@
         android:icon="@mipmap/ic_launcher">
 
         <!--
-          android.app.NativeActivity: an Android framework class that loads
-          our native library (android:value below) via JNI and forwards the
-          Activity lifecycle to it. Almost all app logic is Rust; the only
-          Java source is PackageChangeReceiver, needed because a
-          BroadcastReceiver instance must be a real Java/Dalvik object to be
-          registered with Context.registerReceiver.
+          HomeActivity (a thin android.app.NativeActivity subclass, see
+          SluNativeActivity): loads our native library (android:value below)
+          via JNI and forwards the Activity lifecycle to it. Almost all app
+          logic is Rust; SluNativeActivity/PackageChangeReceiver are the only
+          Java sources, needed for things Rust can't safely do itself (status
+          bar icon contrast, and BroadcastReceiver registration, which
+          requires a real Java/Dalvik object).
         -->
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".HomeActivity"
             android:exported="true"
             android:label="Seelen UI Launcher"
             android:configChanges="orientation|keyboardHidden|screenSize">
@@ -47,6 +48,39 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!--
+          Settings screen. No HOME/LAUNCHER category, so it is never the
+          default activity and never shows up as an app icon: it can only be
+          reached via an explicit startActivity from within this app.
+          Because it's a regular (non-HOME) activity, it appears as its own
+          entry in the Recents/multitasking view.
+
+          Runs in its own process: Slint only allows one platform
+          (`slint::android::init`) per process, and the Home activity's
+          process has already set one. Without `android:process`, opening
+          Settings would fail to init a second platform in-process and the
+          activity would come up blank and unresponsive (no event loop ever
+          starts, so even Back does nothing).
+
+          A distinct `taskAffinity` (plus FLAG_ACTIVITY_NEW_TASK on the
+          launching Intent, see activity::open_settings) is what actually
+          makes it its own entry in Recents/multitasking — process alone
+          doesn't affect tasks; without this it gets pushed onto Home's
+          existing task instead of starting a new one.
+        -->
+        <activity
+            android:name=".SettingsActivity"
+            android:process=":settings"
+            android:taskAffinity="com.seelen.slu_launcher.settings"
+            android:exported="false"
+            android:label="Settings"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="slu_launcher" />
         </activity>
     </application>
 </manifest>

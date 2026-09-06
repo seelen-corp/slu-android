@@ -1,0 +1,11 @@
+export component ConfigPage inherits Rectangle {
+    in property <length> top-inset: 0px;
+
+    Text {
+        x: 8px;
+        y: root.top-inset + 8px;
+        text: "Settings";
+        font-size: 18px;
+        color: black;
+    }
+}
