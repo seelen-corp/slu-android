@@ -5,16 +5,31 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      Package visibility (API 30+): without this, PackageManager hides most
+      other apps from queryIntentActivities/queryIntentActivities results
+      (Settings, Dialer, YouTube, etc. all get silently filtered out), even
+      though this app is a launcher. This <queries> block is what actually
+      grants visibility into every other launchable app.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:label="Seelen UI Launcher"
-        android:icon="@mipmap/ic_launcher"
-        android:hasCode="false">
+        android:icon="@mipmap/ic_launcher">
 
         <!--
           android.app.NativeActivity: an Android framework class that loads
           our native library (android:value below) via JNI and forwards the
-          Activity lifecycle to it. We don't write any Java/Kotlin code of
-          our own.
+          Activity lifecycle to it. Almost all app logic is Rust; the only
+          Java source is PackageChangeReceiver, needed because a
+          BroadcastReceiver instance must be a real Java/Dalvik object to be
+          registered with Context.registerReceiver.
         -->
         <activity
             android:name="android.app.NativeActivity"
@@ -30,6 +45,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
     </application>

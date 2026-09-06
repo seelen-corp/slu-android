@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 slint = { version = "1.15.0", features = ["backend-android-activity-06"] }
 android_logger = "0.14"
 log = "0.4"
+jni = "0.21"
 
 [profile.release]
 opt-level = "z"
