@@ -6,7 +6,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:label="Seelen Launcher"
+        android:label="Seelen UI Launcher"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false">
 
@@ -19,7 +19,7 @@
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
-            android:label="Seelen Launcher"
+            android:label="Seelen UI Launcher"
             android:configChanges="orientation|keyboardHidden|screenSize">
 
             <meta-data

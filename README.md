@@ -1,4 +1,4 @@
-# slu-android
+# Seelen UI Launcher for Android
 
 Android launcher written 100% in Rust (`android-activity` + `ndk` +
 `ndk-context`, no Kotlin/Java). The crate lives at the repo root; `android/`

@@ -2,7 +2,7 @@
 name = "slu_launcher"
 version = "0.1.0"
 edition = "2024"
-description = "Seelen Android launcher (pure Rust)"
+description = "Seelen UI Launcher: Home Screen"
 
 [lib]
 name = "slu_launcher"
