@@ -1,0 +1,20 @@
+[package]
+name = "slu_launcher"
+version = "0.1.0"
+edition = "2024"
+description = "Seelen Android launcher (pure Rust)"
+
+[lib]
+name = "slu_launcher"
+crate-type = ["cdylib"]
+
+[dependencies]
+slint = { version = "1.15.0", features = ["backend-android-activity-06"] }
+android_logger = "0.14"
+log = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  package, versionCode/versionName, minSdk/targetSdk now live in
+  app/build.gradle.kts (standard AGP convention) instead of here.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="Seelen Launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:hasCode="false">
+
+        <!--
+          android.app.NativeActivity: an Android framework class that loads
+          our native library (android:value below) via JNI and forwards the
+          Activity lifecycle to it. We don't write any Java/Kotlin code of
+          our own.
+        -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:label="Seelen Launcher"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="slu_launcher" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

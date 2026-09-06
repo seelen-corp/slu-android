@@ -1,0 +1,13 @@
+/target
+/gen
+*.apk
+*.keystore
+
+# Gradle / Android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+android/local.properties
+*.iml
+.idea/
