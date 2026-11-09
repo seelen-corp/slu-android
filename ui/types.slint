@@ -1,0 +1,31 @@
+// Data shared between Rust and the UI.
+
+export struct AppItem {
+    title: string,
+    // Empty in the text-list view (icons are not loaded).
+    icon: image,
+    package-name: string,
+    activity-name: string,
+    // False for system apps.
+    uninstallable: bool,
+    // Pinned to Home by the user.
+    pinned: bool,
+}
+
+// Settings > Launcher screens.
+export enum LauncherScreens {
+    // A single screen listing every app.
+    apps-menu,
+    // Home (apps pinned by the user) + Apps Menu.
+    home-and-apps-menu,
+}
+
+// Settings > Apps view: how apps are shown on Home and in the Apps Menu.
+export enum AppsView {
+    // Rows with icon and title.
+    list,
+    // Rows with the title only.
+    text-list,
+    // Icons with the title below.
+    grid,
+}

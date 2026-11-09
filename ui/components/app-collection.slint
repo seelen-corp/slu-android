@@ -1,0 +1,58 @@
+import { ListView, ScrollView } from "std-widgets.slint";
+import { AppItem, AppsView } from "../types.slint";
+import { AppListItem } from "app-list-item.slint";
+import { AppGrid } from "app-grid.slint";
+
+// A set of apps shown in the view chosen in Settings (list, text list or grid).
+export component AppCollection inherits Rectangle {
+    in property <[AppItem]> apps: [];
+    in property <AppsView> view: AppsView.list;
+    // Shown on Home (vs. the Apps Menu); decides the context menu actions.
+    in property <bool> on-home: false;
+    in property <bool> home-enabled: false;
+    // Grid only: false leaves vertical drags to the parent (Home's swipe up).
+    in property <bool> grid-scrollable: true;
+    // Scrollable grid only: scrolled to the very top (a swipe down there is free
+    // for the parent, e.g. to go back to Home).
+    out property <bool> grid-at-top: self.grid-scroll-y >= 0;
+
+    // Bound to the grid ScrollView's viewport-y (0 at the top, negative when scrolled).
+    property <length> grid-scroll-y: 0;
+
+    vertical-stretch: 1;
+
+    if root.view != AppsView.grid: ListView {
+        width: root.width;
+        height: root.height;
+
+        for app in root.apps: AppListItem {
+            app: app;
+            show-icon: root.view == AppsView.list;
+            on-home: root.on-home;
+            home-enabled: root.home-enabled;
+        }
+    }
+
+    if root.view == AppsView.grid && root.grid-scrollable: scroll := ScrollView {
+        width: root.width;
+        height: root.height;
+        viewport-height: scrolled-grid.preferred-height;
+        viewport-y <=> root.grid-scroll-y;
+
+        scrolled-grid := AppGrid {
+            width: scroll.visible-width;
+            apps: root.apps;
+            on-home: root.on-home;
+            home-enabled: root.home-enabled;
+        }
+    }
+
+    if root.view == AppsView.grid && !root.grid-scrollable: AppGrid {
+        width: root.width;
+        height: self.preferred-height;
+        y: 0;
+        apps: root.apps;
+        on-home: root.on-home;
+        home-enabled: root.home-enabled;
+    }
+}

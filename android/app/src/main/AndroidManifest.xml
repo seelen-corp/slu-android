@@ -19,6 +19,12 @@
         </intent>
     </queries>
 
+    <!--
+      Required (API 28+) to start the system uninstall dialog with
+      Intent.ACTION_DELETE (see system-modules/apps.rs::uninstall).
+    -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
     <application
         android:label="Seelen UI Launcher"
         android:icon="@mipmap/ic_launcher">

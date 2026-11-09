@@ -1,19 +1,79 @@
 import { HomePage } from "pages/home.slint";
+import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
+import { AppItem, LauncherScreens, AppsView } from "types.slint";
+
+export { I18n } from "i18n.slint";
+export { AppActions } from "app-actions.slint";
+export { AppItem, LauncherScreens, AppsView }
 
 export component MainWindow inherits Window {
-    in property <[string]> app_titles: [];
+    in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
+    in property <AppsView> apps-view: AppsView.list;
+    // Every launchable app (Apps Menu).
+    in property <[AppItem]> apps: [];
+    // Apps pinned to Home, in order.
+    in property <[AppItem]> home-apps: [];
+
     callback open-settings();
 
-    HomePage {
-        app_titles: root.app_titles;
-        top-inset: root.safe-area-insets.top;
-        open-settings => { root.open-settings(); }
+    private property <bool> home-enabled: root.launcher-screens == LauncherScreens.home-and-apps-menu;
+    // Only meaningful with Home enabled; without it the Apps Menu is the only screen.
+    private property <bool> apps-menu-open: false;
+
+    // Back to Home (e.g. when the launcher is resumed after opening an app).
+    public function show-home() {
+        root.apps-menu-open = false;
+        key-handler.focus();
+    }
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Back {
+                if root.home-enabled && root.apps-menu-open {
+                    root.show-home();
+                }
+                // Consumed even on Home: the launcher is never closed by Back.
+                return accept;
+            }
+            reject
+        }
+
+        if !root.home-enabled || root.apps-menu-open: AppsMenuPage {
+            apps: root.apps;
+            view: root.apps-view;
+            home-enabled: root.home-enabled;
+            top-inset: root.safe-area-insets.top;
+            open-settings => { root.open-settings(); }
+            close => { root.show-home(); }
+        }
+
+        if root.home-enabled && !root.apps-menu-open: HomePage {
+            apps: root.home-apps;
+            view: root.apps-view;
+            top-inset: root.safe-area-insets.top;
+            open-settings => { root.open-settings(); }
+            open-apps-menu => {
+                root.apps-menu-open = true;
+                key-handler.focus();
+            }
+        }
     }
 }
 
 export component SettingsWindow inherits Window {
+    in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
+    in property <AppsView> apps-view: AppsView.list;
+    callback launcher-screens-changed(value: LauncherScreens);
+    callback apps-view-changed(value: AppsView);
+
     ConfigPage {
         top-inset: root.safe-area-insets.top;
+        launcher-screens: root.launcher-screens;
+        apps-view: root.apps-view;
+        launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
+        apps-view-changed(value) => { root.apps-view-changed(value); }
     }
 }

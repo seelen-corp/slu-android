@@ -1,0 +1,63 @@
+import { I18n } from "../i18n.slint";
+import { AppActions } from "../app-actions.slint";
+import { AppItem } from "../types.slint";
+
+// Behaviour shared by every app entry (list row, grid cell): tap opens the app,
+// long press shows its context menu. The visuals are the children.
+export component AppItemBase inherits Rectangle {
+    in property <AppItem> app;
+    // Entry shown on Home (vs. the Apps Menu); decides the context menu actions.
+    in property <bool> on-home: false;
+    // Home screen enabled in Settings, so apps can be pinned to it.
+    in property <bool> home-enabled: false;
+
+    // Set once the long press has shown the menu, so releasing doesn't also open the app.
+    private property <bool> long-press-fired: false;
+
+    // Below the TouchArea: it never gets the touch itself, the long press below
+    // shows it. (Slint's own Android long press would swallow taps.)
+    menu-area := ContextMenuArea {
+        Menu {
+            if !root.on-home && root.home-enabled && !root.app.pinned: MenuItem {
+                title: I18n.t("app_actions.add_to_home");
+                activated => { AppActions.add-to-home(root.app); }
+            }
+            if root.on-home: MenuItem {
+                title: I18n.t("app_actions.remove_from_home");
+                activated => { AppActions.remove-from-home(root.app); }
+            }
+            if !root.on-home: MenuItem {
+                title: I18n.t("app_actions.app_info");
+                activated => { AppActions.app-info(root.app); }
+            }
+            if root.app.uninstallable: MenuItem {
+                title: I18n.t("app_actions.uninstall");
+                activated => { AppActions.uninstall(root.app); }
+            }
+        }
+    }
+
+    @children
+
+    touch := TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.long-press-fired = false;
+            }
+        }
+        clicked => {
+            if !root.long-press-fired {
+                AppActions.launch(root.app);
+            }
+        }
+    }
+
+    Timer {
+        interval: 500ms;
+        running: touch.pressed && !root.long-press-fired;
+        triggered => {
+            root.long-press-fired = true;
+            menu-area.show({ x: touch.pressed-x, y: touch.pressed-y });
+        }
+    }
+}

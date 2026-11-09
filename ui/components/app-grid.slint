@@ -1,0 +1,70 @@
+import { Tokens } from "../tokens.slint";
+import { AppItem } from "../types.slint";
+import { AppItemBase } from "app-item-base.slint";
+
+// Grid cell: icon with the title below.
+component AppGridItem inherits AppItemBase {
+    in property <length> icon-size;
+    in property <length> label-font-size;
+
+    VerticalLayout {
+        padding: Tokens.spacing-xs;
+        spacing: Tokens.spacing-2xs;
+        alignment: start;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Image {
+                source: root.app.icon;
+                width: root.icon-size;
+                height: root.icon-size;
+            }
+        }
+
+        Text {
+            text: root.app.title;
+            font-size: root.label-font-size;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// Apps laid out in rows of equally sized cells, as many columns as fit. Its
+// preferred height is the height of all its rows (it doesn't scroll by itself).
+export component AppGrid inherits Rectangle {
+    in property <[AppItem]> apps: [];
+    in property <bool> on-home: false;
+    in property <bool> home-enabled: false;
+
+    // Same size Rust renders the icons at (`ICON_SIZE` in lib.rs).
+    property <length> icon-size: 48px;
+    property <length> label-font-size: 0.875rem;
+    // Minimum cell width; the free space is spread among the columns.
+    property <length> min-cell-width: 80px;
+    property <int> columns: Math.max(1, Math.floor(self.width / self.min-cell-width));
+    property <length> cell-width: self.width / self.columns;
+    property <length> cell-height: self.icon-size + 2 * Tokens.spacing-xs + Tokens.spacing-2xs + label-metrics.preferred-height;
+
+    preferred-height: Math.ceil(self.apps.length / self.columns) * self.cell-height;
+
+    // Only measures the height of one label line.
+    label-metrics := Text {
+        text: "Ag";
+        font-size: root.label-font-size;
+        visible: false;
+    }
+
+    for app[index] in root.apps: AppGridItem {
+        x: Math.mod(index, root.columns) * root.cell-width;
+        y: Math.floor(index / root.columns) * root.cell-height;
+        width: root.cell-width;
+        height: root.cell-height;
+        icon-size: root.icon-size;
+        label-font-size: root.label-font-size;
+        app: app;
+        on-home: root.on-home;
+        home-enabled: root.home-enabled;
+    }
+}

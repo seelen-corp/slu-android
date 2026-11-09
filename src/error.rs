@@ -18,6 +18,7 @@ macro_rules! define_app_errors {
 
 define_app_errors!(
     App(String);
+    Io(std::io::Error);
     Jni(jni::errors::Error);
     Platform(slint::PlatformError);
     SetPlatform(slint::platform::SetPlatformError);

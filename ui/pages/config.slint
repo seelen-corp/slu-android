@@ -1,11 +1,76 @@
-export component ConfigPage inherits Rectangle {
-    in property <length> top-inset: 0px;
+import { ComboBox } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Tokens } from "../tokens.slint";
+import { LauncherScreens, AppsView } from "../types.slint";
+
+// A setting: label on the left, its control (the child) on the right.
+component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+
+    spacing: Tokens.spacing-s;
 
     Text {
-        x: 8px;
-        y: root.top-inset + 8px;
-        text: "Settings";
-        font-size: 18px;
-        color: black;
+        text: root.label;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        wrap: word-wrap;
+    }
+
+    @children
+}
+
+export component ConfigPage inherits Rectangle {
+    in property <length> top-inset: 0px;
+    in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
+    in property <AppsView> apps-view: AppsView.list;
+    callback launcher-screens-changed(value: LauncherScreens);
+    callback apps-view-changed(value: AppsView);
+
+    VerticalLayout {
+        padding: Tokens.spacing-m;
+        padding-top: root.top-inset + Tokens.spacing-m;
+        spacing: Tokens.spacing-m;
+        alignment: start;
+
+        Text {
+            text: I18n.t("settings.title");
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        SettingRow {
+            label: I18n.t("settings.launcher_screens");
+
+            // Same order as the `LauncherScreens` enum.
+            ComboBox {
+                model: [
+                    I18n.t("settings.launcher_screens_apps_menu"),
+                    I18n.t("settings.launcher_screens_home_and_apps_menu"),
+                ];
+                current-index: root.launcher-screens == LauncherScreens.apps-menu ? 0 : 1;
+                selected => {
+                    root.launcher-screens-changed(
+                        self.current-index == 0 ? LauncherScreens.apps-menu : LauncherScreens.home-and-apps-menu);
+                }
+            }
+        }
+
+        SettingRow {
+            label: I18n.t("settings.apps_view");
+
+            // Same order as the `AppsView` enum.
+            ComboBox {
+                model: [
+                    I18n.t("settings.apps_view_list"),
+                    I18n.t("settings.apps_view_text_list"),
+                    I18n.t("settings.apps_view_grid"),
+                ];
+                current-index: root.apps-view == AppsView.list ? 0 : root.apps-view == AppsView.text-list ? 1 : 2;
+                selected => {
+                    root.apps-view-changed(
+                        self.current-index == 0 ? AppsView.list : self.current-index == 1 ? AppsView.text-list : AppsView.grid);
+                }
+            }
+        }
     }
 }

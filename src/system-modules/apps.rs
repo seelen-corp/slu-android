@@ -17,8 +17,24 @@ const RECEIVER_CLASS: &str = "com/seelen/slu_launcher/PackageChangeReceiver";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppInfo {
     pub package_name: String,
+    /// Fully-qualified class name of the launcher Activity. A package may
+    /// expose several launcher entries, so this (not just the package) is
+    /// what identifies the item.
+    pub activity_name: String,
     pub title: String,
+    /// False for system apps, which the user can't uninstall.
+    pub uninstallable: bool,
 }
+
+/// `ApplicationInfo.FLAG_SYSTEM`.
+const FLAG_SYSTEM: i32 = 1;
+
+/// `Intent.FLAG_ACTIVITY_NEW_TASK`: required when starting an Activity of
+/// another app from the launcher.
+const FLAG_ACTIVITY_NEW_TASK: i32 = 0x10000000;
+/// `Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED`: brings the app's existing task
+/// to the front instead of stacking a new instance, like the stock launcher.
+const FLAG_ACTIVITY_RESET_TASK_IF_NEEDED: i32 = 0x00200000;
 
 pub type SubscriptionId = u64;
 
@@ -41,6 +57,230 @@ pub fn get_installed_apps() -> Result<Vec<AppInfo>> {
     let ctx = android_ctx::get()?;
     let mut env = ctx.vm.attach_current_thread()?;
     query_launchable_apps(&mut env, ctx.activity.as_obj())
+}
+
+/// Starts the given launcher Activity (as returned by `get_installed_apps`)
+/// the same way the system launcher does.
+pub fn launch(package_name: &str, activity_name: &str) -> Result<()> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+
+    let intent_class = env.find_class("android/content/Intent")?;
+    let action = env.new_string("android.intent.action.MAIN")?;
+    let intent = env.new_object(
+        intent_class,
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&action)],
+    )?;
+    let category = env.new_string("android.intent.category.LAUNCHER")?;
+    env.call_method(
+        &intent,
+        "addCategory",
+        "(Ljava/lang/String;)Landroid/content/Intent;",
+        &[JValue::Object(&category)],
+    )?;
+
+    let package = env.new_string(package_name)?;
+    let class = env.new_string(activity_name)?;
+    env.call_method(
+        &intent,
+        "setClassName",
+        "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;",
+        &[JValue::Object(&package), JValue::Object(&class)],
+    )?;
+    env.call_method(
+        &intent,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(
+            FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+        )],
+    )?;
+
+    start_activity(&mut env, ctx.activity.as_obj(), &intent)
+}
+
+/// Renders the icon of a launcher Activity into a `size`x`size` RGBA buffer
+/// (`size` in physical pixels).
+pub fn load_icon(
+    package_name: &str,
+    activity_name: &str,
+    size: u32,
+) -> Result<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    // Own local frame: this runs once per app, so locals must not pile up.
+    let result = env.with_local_frame(16, |env| {
+        render_icon(env, ctx.activity.as_obj(), package_name, activity_name, size)
+    });
+    if result.is_err() && env.exception_check()? {
+        // e.g. NameNotFoundException if the app was just uninstalled.
+        env.exception_clear()?;
+    }
+    result
+}
+
+fn render_icon(
+    env: &mut JNIEnv,
+    activity: &JObject,
+    package_name: &str,
+    activity_name: &str,
+    size: u32,
+) -> Result<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let side = size as i32;
+
+    let pm = env
+        .call_method(
+            activity,
+            "getPackageManager",
+            "()Landroid/content/pm/PackageManager;",
+            &[],
+        )?
+        .l()?;
+    let package = env.new_string(package_name)?;
+    let class = env.new_string(activity_name)?;
+    let component = env.new_object(
+        "android/content/ComponentName",
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Object(&package), JValue::Object(&class)],
+    )?;
+    let drawable = env
+        .call_method(
+            &pm,
+            "getActivityIcon",
+            "(Landroid/content/ComponentName;)Landroid/graphics/drawable/Drawable;",
+            &[JValue::Object(&component)],
+        )?
+        .l()?;
+
+    let config = env
+        .get_static_field(
+            "android/graphics/Bitmap$Config",
+            "ARGB_8888",
+            "Landroid/graphics/Bitmap$Config;",
+        )?
+        .l()?;
+    let bitmap = env
+        .call_static_method(
+            "android/graphics/Bitmap",
+            "createBitmap",
+            "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;",
+            &[JValue::Int(side), JValue::Int(side), JValue::Object(&config)],
+        )?
+        .l()?;
+    let canvas = env.new_object(
+        "android/graphics/Canvas",
+        "(Landroid/graphics/Bitmap;)V",
+        &[JValue::Object(&bitmap)],
+    )?;
+    env.call_method(
+        &drawable,
+        "setBounds",
+        "(IIII)V",
+        &[JValue::Int(0), JValue::Int(0), JValue::Int(side), JValue::Int(side)],
+    )?;
+    env.call_method(
+        &drawable,
+        "draw",
+        "(Landroid/graphics/Canvas;)V",
+        &[JValue::Object(&canvas)],
+    )?;
+
+    let len = (size * size) as usize;
+    let pixels = env.new_int_array(len as i32)?;
+    env.call_method(
+        &bitmap,
+        "getPixels",
+        "([IIIIIII)V",
+        &[
+            JValue::Object(&pixels),
+            JValue::Int(0),
+            JValue::Int(side),
+            JValue::Int(0),
+            JValue::Int(0),
+            JValue::Int(side),
+            JValue::Int(side),
+        ],
+    )?;
+    env.call_method(&bitmap, "recycle", "()V", &[])?;
+
+    let mut argb = vec![0i32; len];
+    env.get_int_array_region(&pixels, 0, &mut argb)?;
+
+    // `getPixels` returns non-premultiplied ARGB color ints.
+    let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(size, size);
+    for (dst, src) in buffer.make_mut_slice().iter_mut().zip(argb) {
+        let c = src as u32;
+        *dst = slint::Rgba8Pixel {
+            r: (c >> 16) as u8,
+            g: (c >> 8) as u8,
+            b: c as u8,
+            a: (c >> 24) as u8,
+        };
+    }
+    Ok(buffer)
+}
+
+/// Opens the system "App info" screen of the given package.
+pub fn open_app_info(package_name: &str) -> Result<()> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    let intent = package_intent(
+        &mut env,
+        "android.settings.APPLICATION_DETAILS_SETTINGS",
+        package_name,
+    )?;
+    env.call_method(
+        &intent,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(FLAG_ACTIVITY_NEW_TASK)],
+    )?;
+    start_activity(&mut env, ctx.activity.as_obj(), &intent)
+}
+
+/// Asks the system to uninstall the given package. Android shows its own
+/// confirmation dialog; the app list refreshes through the package receiver.
+/// Needs `REQUEST_DELETE_PACKAGES` in the manifest.
+pub fn uninstall(package_name: &str) -> Result<()> {
+    let ctx = android_ctx::get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    let intent = package_intent(&mut env, "android.intent.action.DELETE", package_name)?;
+    start_activity(&mut env, ctx.activity.as_obj(), &intent)
+}
+
+/// `new Intent(action, Uri.parse("package:" + package_name))`.
+fn package_intent<'local>(
+    env: &mut JNIEnv<'local>,
+    action: &str,
+    package_name: &str,
+) -> Result<JObject<'local>> {
+    let uri_str = env.new_string(format!("package:{package_name}"))?;
+    let uri = env
+        .call_static_method(
+            "android/net/Uri",
+            "parse",
+            "(Ljava/lang/String;)Landroid/net/Uri;",
+            &[JValue::Object(&uri_str)],
+        )?
+        .l()?;
+    let action = env.new_string(action)?;
+    let intent = env.new_object(
+        "android/content/Intent",
+        "(Ljava/lang/String;Landroid/net/Uri;)V",
+        &[JValue::Object(&action), JValue::Object(&uri)],
+    )?;
+    Ok(intent)
+}
+
+fn start_activity(env: &mut JNIEnv, activity: &JObject, intent: &JObject) -> Result<()> {
+    env.call_method(
+        activity,
+        "startActivity",
+        "(Landroid/content/Intent;)V",
+        &[JValue::Object(intent)],
+    )?;
+    Ok(())
 }
 
 /// Registers a callback invoked whenever the installed-apps set changes
@@ -188,6 +428,20 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
             .l()?;
         let package_name_jstr: JString = package_name_obj.into();
         let package_name: String = env.get_string(&package_name_jstr)?.into();
+        let activity_name_obj = env
+            .get_field(&activity_info, "name", "Ljava/lang/String;")?
+            .l()?;
+        let activity_name_jstr: JString = activity_name_obj.into();
+        let activity_name: String = env.get_string(&activity_name_jstr)?.into();
+        let application_info = env
+            .get_field(
+                &activity_info,
+                "applicationInfo",
+                "Landroid/content/pm/ApplicationInfo;",
+            )?
+            .l()?;
+        let flags = env.get_field(&application_info, "flags", "I")?.i()?;
+        let uninstallable = flags & FLAG_SYSTEM == 0;
 
         let label = env
             .call_method(
@@ -205,7 +459,9 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
 
         apps.push(AppInfo {
             package_name,
+            activity_name,
             title,
+            uninstallable,
         });
     }
 

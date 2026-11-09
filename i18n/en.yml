@@ -1,0 +1,19 @@
+home:
+  open_settings: Settings
+  all_apps: All apps
+  empty: No apps on Home yet. Long-press an app in All apps and choose "Add to Home".
+  empty_grid: No apps on Home yet. Swipe up to see all apps, long-press one and choose "Add to Home".
+app_actions:
+  add_to_home: Add to Home
+  remove_from_home: Remove from Home
+  app_info: App info
+  uninstall: Uninstall
+settings:
+  title: Settings
+  launcher_screens: Launcher screens
+  launcher_screens_apps_menu: Apps Menu
+  launcher_screens_home_and_apps_menu: Home & Apps Menu
+  apps_view: Apps view
+  apps_view_list: List
+  apps_view_text_list: Text list
+  apps_view_grid: Grid

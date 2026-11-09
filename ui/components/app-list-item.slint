@@ -1,0 +1,29 @@
+import { Tokens } from "../tokens.slint";
+import { AppItemBase } from "app-item-base.slint";
+
+// Row of the list views: icon + title (list) or title only (text list).
+export component AppListItem inherits AppItemBase {
+    in property <bool> show-icon: true;
+
+    HorizontalLayout {
+        padding-left: Tokens.spacing-m;
+        padding-right: Tokens.spacing-m;
+        padding-top: root.show-icon ? Tokens.spacing-xs : Tokens.spacing-s;
+        padding-bottom: root.show-icon ? Tokens.spacing-xs : Tokens.spacing-s;
+        spacing: Tokens.spacing-s;
+
+        // Same size Rust renders the icons at (`ICON_SIZE` in lib.rs).
+        if root.show-icon: Image {
+            source: root.app.icon;
+            width: 48px;
+            height: 48px;
+        }
+
+        Text {
+            text: root.app.title;
+            font-size: 1.125rem;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

@@ -1,0 +1,45 @@
+import { Button } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Tokens } from "../tokens.slint";
+import { AppItem, AppsView } from "../types.slint";
+import { AppCollection } from "../components/app-collection.slint";
+
+// Apps Menu: every launchable app.
+export component AppsMenuPage inherits Rectangle {
+    in property <[AppItem]> apps: [];
+    in property <AppsView> view: AppsView.list;
+    in property <length> top-inset: 0px;
+    // Home screen enabled (Settings > Launcher screens), so apps can be pinned to it.
+    in property <bool> home-enabled: false;
+
+    callback open-settings();
+    // Grid only: swipe down (with the grid scrolled to the top), the counterpart of
+    // Home's swipe up.
+    callback close();
+
+    SwipeGestureHandler {
+        // Only at the top: anywhere else a downward drag scrolls the grid.
+        handle-swipe-down: root.home-enabled && root.view == AppsView.grid && collection.grid-at-top;
+        swiped => { root.close(); }
+
+        VerticalLayout {
+            padding-top: root.top-inset;
+
+            HorizontalLayout {
+                padding: Tokens.spacing-xs;
+                alignment: end;
+
+                Button {
+                    text: I18n.t("home.open_settings");
+                    clicked => { root.open-settings(); }
+                }
+            }
+
+            collection := AppCollection {
+                apps: root.apps;
+                view: root.view;
+                home-enabled: root.home-enabled;
+            }
+        }
+    }
+}

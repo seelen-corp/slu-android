@@ -1,0 +1,11 @@
+import { AppItem } from "types.slint";
+
+// Actions on an app, implemented in Rust. Called by every app entry (list row,
+// grid cell) wherever it is shown.
+export global AppActions {
+    callback launch(app: AppItem);
+    callback add-to-home(app: AppItem);
+    callback remove-from-home(app: AppItem);
+    callback app-info(app: AppItem);
+    callback uninstall(app: AppItem);
+}

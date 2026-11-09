@@ -1,0 +1,15 @@
+{
+  "name": "slu-android",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "translate": "node ./scripts/translate/mod.ts"
+  },
+  "devDependencies": {
+    "@seelen-ui/lib": "^2.8.4",
+    "@seelen/translation-toolkit": "^1.2.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "js-yaml": "^4.1.0"
+  }
+}

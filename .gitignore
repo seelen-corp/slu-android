@@ -11,3 +11,6 @@ android/app/src/main/jniLibs/
 android/local.properties
 *.iml
 .idea/
+
+# Node
+node_modules/

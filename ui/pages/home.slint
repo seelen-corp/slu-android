@@ -1,28 +1,60 @@
-import { ListView, Button } from "std-widgets.slint";
+import { Button } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Tokens } from "../tokens.slint";
+import { AppItem, AppsView } from "../types.slint";
+import { AppCollection } from "../components/app-collection.slint";
 
+// Home: only the apps pinned by the user.
 export component HomePage inherits Rectangle {
-    in property <[string]> app_titles: [];
+    in property <[AppItem]> apps: [];
+    in property <AppsView> view: AppsView.list;
     in property <length> top-inset: 0px;
+
     callback open-settings();
+    callback open-apps-menu();
 
-    VerticalLayout {
-        padding-top: root.top-inset;
+    // Grid opens the Apps Menu with a swipe up; the list views with a button.
+    property <bool> grid: root.view == AppsView.grid;
 
-        HorizontalLayout {
-            padding: 8px;
-            alignment: end;
+    SwipeGestureHandler {
+        handle-swipe-up: root.grid;
+        swiped => { root.open-apps-menu(); }
 
-            Button {
-                text: "Settings";
-                clicked => { root.open-settings(); }
+        VerticalLayout {
+            padding-top: root.top-inset;
+
+            HorizontalLayout {
+                padding: Tokens.spacing-xs;
+                spacing: Tokens.spacing-xs;
+                alignment: end;
+
+                if !root.grid: Button {
+                    text: I18n.t("home.all_apps");
+                    clicked => { root.open-apps-menu(); }
+                }
+
+                Button {
+                    text: I18n.t("home.open_settings");
+                    clicked => { root.open-settings(); }
+                }
             }
-        }
 
-        ListView {
-            for title in app_titles: Text {
-                text: title;
-                font-size: 18px;
-                color: black;
+            if root.apps.length == 0: VerticalLayout {
+                padding: Tokens.spacing-m;
+
+                Text {
+                    text: root.grid ? I18n.t("home.empty_grid") : I18n.t("home.empty");
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+            }
+
+            AppCollection {
+                apps: root.apps;
+                view: root.view;
+                on-home: true;
+                home-enabled: true;
+                grid-scrollable: false;
             }
         }
     }

@@ -1,0 +1,11 @@
+// Translations live in `i18n/<lang>.yml` and are resolved in Rust (rust-i18n).
+// Usage: `text: I18n.t("home.open_settings");`
+export global I18n {
+    // Current locale; part of every lookup so bindings re-evaluate when it changes.
+    in property <string> locale: "en";
+    pure callback translate(key: string, locale: string) -> string;
+
+    public pure function t(key: string) -> string {
+        return self.translate(key, self.locale);
+    }
+}
