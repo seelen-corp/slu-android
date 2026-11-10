@@ -1,0 +1,134 @@
+name: "Release"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  continuous-integration:
+    uses: ./.github/workflows/ci.yml
+
+  get-version:
+    needs: continuous-integration
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        id: get-version
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const fs = require('fs');
+            const cargoToml = fs.readFileSync('Cargo.toml', 'utf8');
+            const pkg = cargoToml.split('[package]')[1].split(/\n\[/)[0];
+            const version = pkg.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+            if (!version) {
+              core.setFailed('version not found in Cargo.toml [package]');
+              return '';
+            }
+            if (context.ref.startsWith('refs/tags/') && context.ref !== `refs/tags/v${version}`) {
+              core.setFailed(`Tag ${context.ref} does not match Cargo.toml version v${version}`);
+              return '';
+            }
+            return version;
+
+  create-release:
+    needs: get-version
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release (draft)
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = "${{ needs.get-version.outputs.version }}";
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${version}`,
+              target_commitish: context.sha,
+              name: `Seelen UI Launcher v${version}`,
+              generate_release_notes: true,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build-apk:
+    needs:
+      - get-version
+      - create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key-prefix: rust-release
+
+      - name: Decode signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "SLU_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        working-directory: android
+        env:
+          SLU_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SLU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SLU_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          mv android/app/build/outputs/apk/release/app-release.apk \
+            "dist/slu-launcher_${{ needs.get-version.outputs.version }}.apk"
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - name: Upload APK to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*.apk
+
+      - name: Upload APK to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          file: dist/*.apk
+          file_glob: true
+
+  publish-release:
+    needs: [create-release, build-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release (un-draft)
+        uses: actions/github-script@v7
+        env:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.releaseId,
+              draft: false,
+            });

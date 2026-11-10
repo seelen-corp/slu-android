@@ -2,6 +2,19 @@ plugins {
     id("com.android.application")
 }
 
+// Cargo.toml is the single source of truth for the app version (the release
+// workflow checks the pushed vX.Y.Z tag against it).
+val cargoVersion: String = run {
+    val pkg = rootProject.file("../Cargo.toml").readText()
+        .substringAfter("[package]").substringBefore("\n[")
+    Regex("""(?m)^version\s*=\s*"([^"]+)"""").find(pkg)?.groupValues?.get(1)
+        ?: error("version not found in Cargo.toml [package]")
+}
+val cargoVersionCode: Int = run {
+    val (major, minor, patch) = cargoVersion.substringBefore('-').split('.').map { it.toInt() }
+    major * 10000 + minor * 100 + patch
+}
+
 android {
     namespace = "com.seelen.slu_launcher"
     compileSdk = 34
@@ -10,16 +23,19 @@ android {
         applicationId = "com.seelen.slu_launcher"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = cargoVersionCode
+        versionName = cargoVersion
     }
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file("release.keystore")
-            storePassword = "slu_launcher"
-            keyAlias = "slu_launcher"
-            keyPassword = "slu_launcher"
+            // CI injects the production key via env vars; locally it falls
+            // back to the gitignored dev keystore.
+            storeFile = System.getenv("SLU_KEYSTORE_PATH")?.let { file(it) }
+                ?: rootProject.file("release.keystore")
+            storePassword = System.getenv("SLU_KEYSTORE_PASSWORD") ?: "slu_launcher"
+            keyAlias = System.getenv("SLU_KEY_ALIAS") ?: "slu_launcher"
+            keyPassword = System.getenv("SLU_KEY_PASSWORD") ?: "slu_launcher"
         }
     }
 

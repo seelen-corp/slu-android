@@ -12,7 +12,9 @@ rust_i18n::i18n!("i18n", fallback = "en");
 /// Wires the `I18n` Slint global of a window to the translations in `i18n/`.
 fn setup_i18n(i18n: I18n<'_>, locale: &str) {
     i18n.on_translate(|key, locale| {
-        rust_i18n::t!(key.as_str(), locale = locale.as_str()).as_ref().into()
+        rust_i18n::t!(key.as_str(), locale = locale.as_str())
+            .as_ref()
+            .into()
     });
     i18n.set_locale(locale.into());
 }
@@ -255,7 +257,6 @@ fn run(app: slint::android::AndroidApp) -> Result<()> {
         run_home(&locale, &home_window)
     }
 }
-
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]

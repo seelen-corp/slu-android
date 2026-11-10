@@ -91,3 +91,18 @@ previously installed a release build). Uninstall it first, then reinstall:
 & "$env:ANDROID_HOME\platform-tools\adb.exe" uninstall com.seelen.slu_launcher
 .\gradlew.bat installDebug
 ```
+
+## Release
+
+The version lives only in `Cargo.toml` (`[package].version`); Gradle derives
+`versionName` and `versionCode` (`major*10000 + minor*100 + patch`) from it.
+
+To publish: bump the version in `Cargo.toml`, commit, then push a matching tag
+(`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml`
+runs CI, checks the tag against `Cargo.toml`, builds the signed APK and
+attaches it to a GitHub release.
+
+Required repository secrets: `ANDROID_KEYSTORE_BASE64` (the `.keystore` file,
+base64-encoded), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEY_PASSWORD`. Locally, without those env vars, release builds are
+signed with the dev `android/release.keystore`.

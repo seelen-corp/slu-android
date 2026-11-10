@@ -1,0 +1,63 @@
+name: Setup Android Build Environment
+description: Sets up JDK 21, Rust (android targets), cargo-ndk, Android NDK and SDK platform with caching
+
+inputs:
+  rust-components:
+    description: Additional Rust components to install (comma-separated)
+    required: false
+    default: ""
+  cache-key-prefix:
+    description: Prefix for cache keys
+    required: false
+    default: "rust"
+
+runs:
+  using: composite
+  steps:
+    # JDK 25 does not work: AGP's d8/R8 doesn't support its class file version
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+        cache: gradle
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.rust-components }}
+        targets: aarch64-linux-android,x86_64-linux-android
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+
+    - name: Install cargo-ndk
+      shell: bash
+      run: command -v cargo-ndk >/dev/null || cargo install cargo-ndk --locked
+
+    - name: Setup Android NDK
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26d # 26.3.11579264
+        add-to-path: false
+
+    - name: Configure Android SDK
+      shell: bash
+      env:
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: |
+        echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+        yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+        chmod +x android/gradlew

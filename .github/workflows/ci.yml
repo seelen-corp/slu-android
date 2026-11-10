@@ -1,0 +1,36 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_call:
+
+jobs:
+  rust-linter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          rust-components: rustfmt,clippy
+          cache-key-prefix: rust-lint
+
+      - name: Format
+        run: cargo fmt -- --check
+
+      # The crate only builds for Android targets, so clippy goes through cargo-ndk
+      - name: Linter
+        run: cargo ndk -t arm64-v8a -P 34 clippy --locked -- -D warnings
+
+  build-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key-prefix: rust-debug
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon

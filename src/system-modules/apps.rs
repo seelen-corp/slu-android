@@ -39,8 +39,9 @@ const FLAG_ACTIVITY_RESET_TASK_IF_NEEDED: i32 = 0x00200000;
 pub type SubscriptionId = u64;
 
 static NEXT_SUBSCRIPTION_ID: AtomicU64 = AtomicU64::new(1);
-static SUBSCRIBERS: Mutex<Vec<(SubscriptionId, Box<dyn Fn() + Send + 'static>)>> =
-    Mutex::new(Vec::new());
+type Subscriber = (SubscriptionId, Box<dyn Fn() + Send + 'static>);
+
+static SUBSCRIBERS: Mutex<Vec<Subscriber>> = Mutex::new(Vec::new());
 
 /// Must be called once from `android_main`, after `android_ctx::init`.
 /// Registers the BroadcastReceiver used to detect package changes.
@@ -111,7 +112,13 @@ pub fn load_icon(
     let mut env = ctx.vm.attach_current_thread()?;
     // Own local frame: this runs once per app, so locals must not pile up.
     let result = env.with_local_frame(16, |env| {
-        render_icon(env, ctx.activity.as_obj(), package_name, activity_name, size)
+        render_icon(
+            env,
+            ctx.activity.as_obj(),
+            package_name,
+            activity_name,
+            size,
+        )
     });
     if result.is_err() && env.exception_check()? {
         // e.g. NameNotFoundException if the app was just uninstalled.
@@ -165,7 +172,11 @@ fn render_icon(
             "android/graphics/Bitmap",
             "createBitmap",
             "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;",
-            &[JValue::Int(side), JValue::Int(side), JValue::Object(&config)],
+            &[
+                JValue::Int(side),
+                JValue::Int(side),
+                JValue::Object(&config),
+            ],
         )?
         .l()?;
     let canvas = env.new_object(
@@ -177,7 +188,12 @@ fn render_icon(
         &drawable,
         "setBounds",
         "(IIII)V",
-        &[JValue::Int(0), JValue::Int(0), JValue::Int(side), JValue::Int(side)],
+        &[
+            JValue::Int(0),
+            JValue::Int(0),
+            JValue::Int(side),
+            JValue::Int(side),
+        ],
     )?;
     env.call_method(
         &drawable,
@@ -296,6 +312,7 @@ where
     id
 }
 
+#[allow(dead_code)] // public API, not used yet
 pub fn unsubscribe(id: SubscriptionId) {
     SUBSCRIBERS
         .lock()
@@ -465,7 +482,7 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
         });
     }
 
-    apps.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    apps.sort_by_key(|a| a.title.to_lowercase());
     Ok(apps)
 }
 
