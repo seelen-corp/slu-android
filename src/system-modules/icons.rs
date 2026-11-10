@@ -73,6 +73,38 @@ pub fn load_icon(
     Ok(buffer)
 }
 
+/// The icon shape alone (`size`x`size`, physical pixels): opaque inside, with
+/// the same anti-aliased edge as the icons. White, to be tinted by the UI
+/// (folders are drawn in the shape of the app icons).
+pub fn load_shape(size: u32, style: IconStyle) -> Result<SharedPixelBuffer<Rgba8Pixel>> {
+    let mask = if style.shape == IconShape::System {
+        android_ctx::with_activity(|env, _| {
+            // Before Android 8 there is no system shape (icons keep their own).
+            if android_ctx::sdk_int(env)? < API_O {
+                let circle = IconStyle {
+                    shape: IconShape::Circle,
+                    ..style
+                };
+                return Ok(custom_shape_mask(size, circle));
+            }
+            let surface = Surface::new(env, size)?;
+            let result = shape_mask(env, &surface, style);
+            surface.recycle(env)?;
+            result
+        })?
+    } else {
+        custom_shape_mask(size, style)
+    };
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(size, size);
+    for (pixel, coverage) in buffer.make_mut_slice().iter_mut().zip(mask) {
+        *pixel = Rgba8Pixel {
+            a: coverage,
+            ..LEGACY_BACKGROUND
+        };
+    }
+    Ok(buffer)
+}
+
 fn activity_icon<'local>(
     env: &mut JNIEnv<'local>,
     activity: &JObject,

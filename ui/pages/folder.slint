@@ -1,0 +1,136 @@
+import { I18n } from "../i18n.slint";
+import { Tokens } from "../tokens.slint";
+import { HomeActions, Interaction } from "../app-actions.slint";
+import { AppsView, FolderItem } from "../types.slint";
+import { AppsLayout } from "../apps-layout.slint";
+import { AppCollection } from "../components/app-collection.slint";
+import { GridLabelMetrics, GridMetrics } from "../components/app-grid.slint";
+import { ListLabelMetrics, ListMetrics } from "../components/app-list-item.slint";
+import { WallpaperLabel } from "../components/wallpaper-label.slint";
+
+// A folder of Home, opened: its title as the whole first row (a transparent
+// input, edited by tapping it), then its apps in the view chosen in Settings,
+// over the wallpaper like Home and the Apps Menu. Swipe down (at the top) or
+// Back closes it.
+export component FolderPage inherits Rectangle {
+    in property <FolderItem> folder;
+    in property <AppsView> view: AppsView.list;
+    // Grid view.
+    in property <int> columns: 4;
+    in property <length> top-inset: 0px;
+    in property <length> bottom-inset: 0px;
+
+    callback close();
+
+    // A folder was opened: show its saved title, from the top.
+    public function reset() {
+        title-input.clear-focus();
+        title-input.text = root.folder.title;
+        collection.scroll-to-top();
+    }
+
+    // Saves the title being edited (with the word the keyboard is still
+    // composing), if it changed. Rust trims it; empty means the default title.
+    public function commit-title() {
+        let text = title-input.text + title-input.preedit-text;
+        if text != root.folder.title {
+            HomeActions.rename-folder(root.folder.id, text);
+        }
+    }
+
+    // Closing distance of the swipe down; shorter swipes are ignored.
+    private property <length> close-distance: 48px;
+    private property <bool> editing: title-input.has-focus;
+    private property <string> shown-title: root.folder.title != "" ? root.folder.title : I18n.t("home.folder");
+
+    // The title row is one row of the view: as tall as a grid cell (icon +
+    // label, see `AppGrid`) or a list row (`AppListItem`).
+    grid-label := GridLabelMetrics { }
+    list-label := ListLabelMetrics { }
+    private property <length> grid-icon: GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - 2 * AppsLayout.padding), root.columns));
+    private property <length> row-height: root.view == AppsView.grid
+        ? GridMetrics.cell-height(root.grid-icon, true, AppsLayout.label-lines * grid-label.preferred-height)
+        : ListMetrics.row-height(list-label.preferred-height);
+
+    // Saved title changed (e.g. Rust trimmed it): shown unless being edited.
+    changed shown-title => {
+        if !root.editing {
+            title-input.text = root.folder.title;
+        }
+    }
+
+    SwipeGestureHandler {
+        // Only at the top: anywhere else a downward drag scrolls the apps.
+        enabled: collection.at-top && !Interaction.item-lifted;
+        handle-swipe-down: true;
+        swiped => {
+            if self.current-position.y - self.pressed-position.y >= root.close-distance {
+                root.close();
+            }
+        }
+
+        VerticalLayout {
+            padding-top: root.top-inset + Tokens.spacing-xs;
+            padding-bottom: root.bottom-inset;
+
+            // Same padding as the apps below (the space between the rows of the
+            // grid is that padding too).
+            HorizontalLayout {
+                padding-left: AppsLayout.padding;
+                padding-right: AppsLayout.padding;
+                padding-top: AppsLayout.padding;
+
+                Rectangle {
+                    height: root.row-height;
+                    border-radius: Tokens.radius-s;
+                    // Focus ring (UX exception: shows where the keyboard input goes).
+                    border-width: root.editing ? 2px : 0;
+                    border-color: Tokens.system-accent-color;
+
+                    // The saved title (with the wallpaper text shadow), or the
+                    // default one as placeholder while editing an empty title.
+                    WallpaperLabel {
+                        x: Tokens.spacing-s;
+                        width: parent.width - 2 * Tokens.spacing-s;
+                        height: parent.height;
+                        visible: !root.editing || title-input.text + title-input.preedit-text == "";
+                        text: root.editing ? I18n.t("home.folder") : root.shown-title;
+                        font-size: 1.25rem;
+                        horizontal-alignment: center;
+                    }
+
+                    // Transparent input: tapping the title edits it. Only drawn
+                    // while editing (the label above shows the title otherwise);
+                    // hidden with opacity, not `visible`, so it still takes the tap.
+                    title-input := TextInput {
+                        x: Tokens.spacing-s;
+                        width: parent.width - 2 * Tokens.spacing-s;
+                        height: parent.height;
+                        opacity: root.editing ? 1 : 0;
+                        single-line: true;
+                        font-size: 1.25rem;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: Tokens.wallpaper-fg-color;
+                        selection-background-color: Tokens.slu-std-ui-selected-overlay;
+                        selection-foreground-color: Tokens.wallpaper-fg-color;
+                        accepted => { self.clear-focus(); }
+                        changed has-focus => {
+                            if !self.has-focus {
+                                root.commit-title();
+                            }
+                        }
+                    }
+                }
+            }
+
+            collection := AppCollection {
+                apps: root.folder.apps;
+                view: root.view;
+                columns: root.columns;
+                home-enabled: true;
+                in-folder: true;
+            }
+        }
+    }
+}

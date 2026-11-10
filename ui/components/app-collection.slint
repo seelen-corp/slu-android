@@ -4,12 +4,14 @@ import { AppsLayout } from "../apps-layout.slint";
 import { AppListItem } from "app-list-item.slint";
 import { AppGrid } from "app-grid.slint";
 
-// The Apps Menu's apps, in the view chosen in Settings (list, text list or grid),
+// Apps (the Apps Menu's, a folder's), in the view chosen in Settings (list, text list or grid),
 // scrollable, with the item size and padding of `AppsLayout`.
 export component AppCollection inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
     in property <bool> home-enabled: false;
+    // The apps of a folder of Home (their menu acts on Home).
+    in property <bool> in-folder: false;
     // Grid view.
     in property <int> columns: 4;
     // Scrolled to the very top (a swipe down there is free for the parent).
@@ -44,6 +46,8 @@ export component AppCollection inherits Rectangle {
                 app: app;
                 show-icon: root.view == AppsView.list;
                 home-enabled: root.home-enabled;
+                on-home: root.in-folder;
+                in-folder: root.in-folder;
             }
         }
     }
@@ -59,6 +63,7 @@ export component AppCollection inherits Rectangle {
             width: scroll.visible-width;
             apps: root.apps;
             home-enabled: root.home-enabled;
+            in-folder: root.in-folder;
             columns: root.columns;
         }
     }

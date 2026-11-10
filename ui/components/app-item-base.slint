@@ -1,26 +1,35 @@
 import { I18n } from "../i18n.slint";
-import { AppActions, Interaction, LauncherActions } from "../app-actions.slint";
-import { AppItem } from "../types.slint";
+import { AppActions, HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
+import { AppItem, FolderItem } from "../types.slint";
 import { MenuSurface, MenuItem } from "menu.slint";
 
-// Behaviour shared by every app entry (list row, grid cell, Home cell): tap opens
-// the app; a long press "lifts" it (haptic tick); releasing a lifted entry shows
-// its menu, and moving it (only `draggable` entries, on Home) drags it instead.
-// The visuals are the children.
+// Behaviour shared by every Home/app entry (list row, grid cell, Home cell): tap
+// opens the app (or the folder); a long press "lifts" it (haptic tick);
+// releasing a lifted entry shows its menu, and moving it (only `draggable`
+// entries, on Home) drags it instead. The visuals are the children.
 export component AppItemBase inherits Rectangle {
     in property <AppItem> app;
+    // A folder of Home instead of an app (`folder`); tapping it `open-folder`.
+    in property <bool> is-folder: false;
+    in property <FolderItem> folder;
     // Entry shown on Home (vs. the Apps Menu); decides the menu actions.
     in property <bool> on-home: false;
+    // App shown inside a folder of Home.
+    in property <bool> in-folder: false;
     // Home screen enabled in Settings, so apps can be placed on it.
     in property <bool> home-enabled: false;
     in property <bool> draggable: false;
 
+    // Title shown: the app's, or the folder's (its default if it has none).
+    out property <string> title: !root.is-folder ? root.app.title
+        : root.folder.title != "" ? root.folder.title : I18n.t("home.folder");
     // Touch is down on the entry (for the pressed overlay).
     out property <bool> pressed: touch.pressed;
     // A long press was recognized and the touch is still down.
     out property <bool> lifted: touch.pressed && root.long-pressed;
     out property <bool> dragging: false;
 
+    callback open-folder();
     // Drag of a `draggable` entry. Positions are in window coordinates.
     callback drag-started(x: length, y: length);
     callback drag-moved(x: length, y: length);
@@ -33,6 +42,14 @@ export component AppItemBase inherits Rectangle {
     private property <length> slop: 8px;
     private property <length> pointer-x: root.absolute-position.x + touch.mouse-x;
     private property <length> pointer-y: root.absolute-position.y + touch.mouse-y;
+
+    function activate() {
+        if root.is-folder {
+            root.open-folder();
+        } else {
+            AppActions.launch(root.app);
+        }
+    }
 
     @children
 
@@ -75,7 +92,7 @@ export component AppItemBase inherits Rectangle {
 
         clicked => {
             if !root.long-pressed {
-                AppActions.launch(root.app);
+                root.activate();
             }
         }
     }
@@ -98,6 +115,14 @@ export component AppItemBase inherits Rectangle {
         MenuSurface {
             min-width: 200px;
 
+            // A folder's only action; the others are the app's.
+            if root.is-folder: MenuItem {
+                text: I18n.t("home.disband_folder");
+                activated => {
+                    HomeActions.disband-folder(root.folder.id);
+                    menu.close();
+                }
+            }
             if !root.on-home && root.home-enabled && !root.app.pinned: MenuItem {
                 text: I18n.t("app_actions.add_to_home");
                 activated => {
@@ -105,21 +130,28 @@ export component AppItemBase inherits Rectangle {
                     menu.close();
                 }
             }
-            if root.on-home: MenuItem {
+            if root.in-folder: MenuItem {
+                text: I18n.t("app_actions.remove_from_folder");
+                activated => {
+                    AppActions.remove-from-folder(root.app);
+                    menu.close();
+                }
+            }
+            if root.on-home && !root.is-folder: MenuItem {
                 text: I18n.t("app_actions.remove_from_home");
                 activated => {
                     AppActions.remove-from-home(root.app);
                     menu.close();
                 }
             }
-            MenuItem {
+            if !root.is-folder: MenuItem {
                 text: I18n.t("app_actions.app_info");
                 activated => {
                     AppActions.app-info(root.app);
                     menu.close();
                 }
             }
-            if root.app.uninstallable: MenuItem {
+            if !root.is-folder && root.app.uninstallable: MenuItem {
                 text: I18n.t("app_actions.uninstall");
                 activated => {
                     AppActions.uninstall(root.app);

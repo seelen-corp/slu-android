@@ -2,13 +2,14 @@ import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
 import { HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
-import { AppItem, AppsView, HomeItem, SwipeDownAction } from "../types.slint";
+import { AppsView, FolderItem, HomeItem, SwipeDownAction } from "../types.slint";
 import { AppsLayout } from "../apps-layout.slint";
 import { AppGridItem, GridLabelMetrics, GridMetrics } from "../components/app-grid.slint";
 import { AppListItem, ListLabelMetrics, ListMetrics } from "../components/app-list-item.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { MenuSurface, MenuItem } from "../components/menu.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
+import { FolderIcon } from "../components/folder-icon.slint";
 
 // Long press on an empty part of Home (opens the Home menu).
 component EmptySpaceTouch inherits TouchArea {
@@ -70,27 +71,41 @@ component PageDots inherits Rectangle {
     }
 }
 
+// Insertion point of a reorder in the list views (drop target indicator).
+component DropLine inherits Rectangle {
+    height: 2px;
+    border-radius: 1px;
+    background: Tokens.system-accent-color;
+}
+
 // Shared drag state of Home, in window coordinates. Bound two-way by the grid
-// and list layouts.
+// and list layouts. Dropping an app on another entry's icon (grid) or on the
+// middle of its row (lists) puts them in a folder.
 component HomeLayoutBase inherits Rectangle {
     in-out property <bool> dragging: false;
-    in-out property <AppItem> drag-app;
+    in-out property <HomeItem> drag-item;
     in-out property <length> drag-x;
     in-out property <length> drag-y;
 
     callback empty-long-pressed(x: length, y: length);
+    callback open-folder(folder: FolderItem);
 
-    protected pure function is-dragged(app: AppItem) -> bool {
-        return root.dragging && app.package-name == root.drag-app.package-name && app.activity-name == root.drag-app.activity-name;
+    protected pure function same-entry(a: HomeItem, b: HomeItem) -> bool {
+        return a.is-folder == b.is-folder && (a.is-folder
+            ? a.folder.id == b.folder.id
+            : a.app.package-name == b.app.package-name && a.app.activity-name == b.app.activity-name);
     }
 
-    protected function start-drag(app: AppItem, x: length, y: length) {
-        root.drag-app = app;
+    protected pure function is-dragged(item: HomeItem) -> bool {
+        return root.dragging && root.same-entry(item, root.drag-item);
+    }
+
+    protected function start-drag(item: HomeItem, x: length, y: length) {
+        root.drag-item = item;
         root.drag-x = x;
         root.drag-y = y;
         root.dragging = true;
     }
-
 }
 
 // Grid view: pages of cells (swiped horizontally) and the dock below them.
@@ -103,6 +118,11 @@ component HomeGrid inherits HomeLayoutBase {
     // Horizontal offset of the pages while the finger swipes them.
     in property <length> swipe-offset: 0;
     in property <bool> swiping: false;
+    // Used cells, from Rust: `home-cells[(page * home-rows + row) * columns + col]`
+    // and `dock-cells[col]`.
+    in property <int> home-rows: 1;
+    in property <[bool]> home-cells: [];
+    in property <[bool]> dock-cells: [];
 
     // The rows that fit changed; Rust saves them and moves the apps that no
     // longer fit. Home is always portrait (manifest), so rotating doesn't change them.
@@ -131,6 +151,27 @@ component HomeGrid inherits HomeLayoutBase {
     property <int> target-row: clamp(floor((root.drag-y - root.pages-y + root.row-gap / 2) / Math.max(1px, root.cell-height + root.row-gap)), 0, root.row-count - 1);
     property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
 
+    // The finger is over the icon of the target cell/slot (not just its cell):
+    // dropping there merges into a folder, anywhere else moves/swaps.
+    property <length> icon-left: (root.cell-width - root.icon-size) / 2;
+    property <length> in-cell-x: root.over-dock
+        ? root.drag-x - dock-area.absolute-position.x - root.edge - root.target-slot * root.cell-width
+        : root.drag-x - root.pages-x - root.target-col * root.cell-width;
+    property <length> in-cell-y: root.over-dock
+        ? root.drag-y - dock-area.absolute-position.y
+        : root.drag-y - root.pages-y - root.target-row * (root.cell-height + root.row-gap);
+    property <bool> over-icon: root.in-cell-x >= root.icon-left && root.in-cell-x <= root.icon-left + root.icon-size
+        && root.in-cell-y >= GridMetrics.cell-padding && root.in-cell-y <= GridMetrics.cell-padding + root.icon-size;
+    property <bool> target-used: root.over-dock
+        ? root.dock-cells[root.target-slot]
+        : root.target-row < root.home-rows && root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col];
+    // The dragged entry's own cell.
+    property <bool> target-is-dragged: root.over-dock
+        ? root.drag-item.dock && root.drag-item.col == root.target-slot
+        : !root.drag-item.dock && root.drag-item.page == root.current-page && root.drag-item.col == root.target-col && root.drag-item.row == root.target-row;
+    // Folders don't go into folders.
+    property <bool> merging: root.dragging && !root.drag-item.is-folder && root.over-icon && root.target-used && !root.target-is-dragged;
+
     function report-rows() {
         // Not before the layout has a real size.
         if root.inner-height > 0 {
@@ -150,9 +191,15 @@ component HomeGrid inherits HomeLayoutBase {
         root.drag-x = x;
         root.drag-y = y;
         if root.over-dock {
-            HomeActions.move-to(root.drag-app, true, 0, root.target-slot, 0);
+            if root.merging {
+                HomeActions.merge-into(root.drag-item, true, 0, root.target-slot, 0);
+            } else {
+                HomeActions.move-to(root.drag-item, true, 0, root.target-slot, 0);
+            }
+        } else if root.merging {
+            HomeActions.merge-into(root.drag-item, false, root.current-page, root.target-col, root.target-row);
         } else {
-            HomeActions.move-to(root.drag-app, false, root.current-page, root.target-col, root.target-row);
+            HomeActions.move-to(root.drag-item, false, root.current-page, root.target-col, root.target-row);
         }
         root.dragging = false;
     }
@@ -191,11 +238,19 @@ component HomeGrid inherits HomeLayoutBase {
                 }
             }
 
-            if root.over-grid: DropHighlight {
+            if root.over-grid && !root.merging: DropHighlight {
                 x: root.edge + root.target-col * root.cell-width;
                 y: root.edge + root.target-row * (root.cell-height + root.row-gap);
                 width: root.cell-width;
                 height: root.cell-height;
+            }
+
+            // Merge target: around the icon only.
+            if root.over-grid && root.merging: DropHighlight {
+                x: root.edge + root.target-col * root.cell-width + root.icon-left - GridMetrics.cell-padding;
+                y: root.edge + root.target-row * (root.cell-height + root.row-gap);
+                width: root.icon-size + 2 * GridMetrics.cell-padding;
+                height: root.icon-size + 2 * GridMetrics.cell-padding;
             }
 
             Rectangle {
@@ -216,11 +271,14 @@ component HomeGrid inherits HomeLayoutBase {
                     icon-size: root.icon-size;
                     label-height: root.label-height;
                     app: item.app;
+                    is-folder: item.is-folder;
+                    folder: item.folder;
                     on-home: true;
                     home-enabled: true;
                     draggable: true;
-                    content-hidden: root.is-dragged(item.app);
-                    drag-started(x, y) => { root.start-drag(item.app, x, y); }
+                    content-hidden: root.is-dragged(item);
+                    open-folder => { root.open-folder(item.folder); }
+                    drag-started(x, y) => { root.start-drag(item, x, y); }
                     drag-moved(x, y) => {
                         root.drag-x = x;
                         root.drag-y = y;
@@ -241,10 +299,17 @@ component HomeGrid inherits HomeLayoutBase {
         dock-area := Rectangle {
             height: root.dock-cell-height + root.edge;
 
-            if root.over-dock: DropHighlight {
+            if root.over-dock && !root.merging: DropHighlight {
                 x: root.edge + root.target-slot * root.cell-width;
                 y: 0;
                 width: root.cell-width;
+                height: root.dock-cell-height;
+            }
+
+            if root.over-dock && root.merging: DropHighlight {
+                x: root.edge + root.target-slot * root.cell-width + root.icon-left - GridMetrics.cell-padding;
+                y: 0;
+                width: root.icon-size + 2 * GridMetrics.cell-padding;
                 height: root.dock-cell-height;
             }
 
@@ -255,12 +320,15 @@ component HomeGrid inherits HomeLayoutBase {
                 height: root.dock-cell-height;
                 icon-size: root.icon-size;
                 app: item.app;
+                is-folder: item.is-folder;
+                folder: item.folder;
                 show-label: false;
                 on-home: true;
                 home-enabled: true;
                 draggable: true;
-                content-hidden: root.is-dragged(item.app);
-                drag-started(x, y) => { root.start-drag(item.app, x, y); }
+                content-hidden: root.is-dragged(item);
+                open-folder => { root.open-folder(item.folder); }
+                drag-started(x, y) => { root.start-drag(item, x, y); }
                 drag-moved(x, y) => {
                     root.drag-x = x;
                     root.drag-y = y;
@@ -275,7 +343,7 @@ component HomeGrid inherits HomeLayoutBase {
 // Swipe up (when the list doesn't scroll) opens the Apps Menu, swipe down (at the
 // top) the Swipe down action of Settings.
 component HomeList inherits HomeLayoutBase {
-    in property <[AppItem]> apps: [];
+    in property <[HomeItem]> items: [];
     in property <bool> show-icon: true;
     in property <length> swipe-distance: 48px;
 
@@ -287,14 +355,27 @@ component HomeList inherits HomeLayoutBase {
     list-metrics := ListLabelMetrics { }
     property <length> row-height: ListMetrics.row-height(list-metrics.preferred-height);
     property <length> edge: AppsLayout.padding;
-    property <length> content-height: 2 * root.edge + root.apps.length * root.row-height;
-    property <bool> over-list: root.dragging;
-    property <int> target-index: clamp(floor((root.drag-y - scroll.absolute-position.y - scroll.viewport-y - root.edge) / Math.max(1px, root.row-height)), 0, root.apps.length - 1);
+    property <length> content-height: 2 * root.edge + root.items.length * root.row-height;
+    // Finger position, in rows from the top of the list.
+    property <float> drag-rows: (root.drag-y - scroll.absolute-position.y - scroll.viewport-y - root.edge) / Math.max(1px, root.row-height);
+    property <int> hover-index: floor(root.drag-rows);
+    // The middle half of another entry's row merges into a folder (folders
+    // don't go into folders); anywhere else inserts between rows.
+    property <bool> merging: root.dragging && !root.drag-item.is-folder
+        && root.hover-index >= 0 && root.hover-index < root.items.length
+        && root.drag-rows - root.hover-index >= 0.25 && root.drag-rows - root.hover-index <= 0.75
+        && !root.same-entry(root.items[root.hover-index], root.drag-item);
+    property <int> insert-index: clamp(round(root.drag-rows), 0, root.items.length);
 
     function end-drag(x: length, y: length) {
         root.drag-x = x;
         root.drag-y = y;
-        HomeActions.move-to-index(root.drag-app, root.target-index);
+        if root.merging {
+            let target = root.items[root.hover-index];
+            HomeActions.merge-into(root.drag-item, target.dock, target.page, target.col, target.row);
+        } else {
+            HomeActions.move-to-index(root.drag-item, root.insert-index);
+        }
         root.dragging = false;
     }
 
@@ -322,7 +403,7 @@ component HomeList inherits HomeLayoutBase {
                     long-pressed(x, y) => { root.empty-long-pressed(x, y); }
                 }
 
-                if root.apps.length == 0: VerticalLayout {
+                if root.items.length == 0: VerticalLayout {
                     width: scroll.visible-width;
                     height: scroll.visible-height;
                     padding: Tokens.spacing-xl;
@@ -335,25 +416,34 @@ component HomeList inherits HomeLayoutBase {
                     }
                 }
 
-                if root.over-list: DropHighlight {
+                if root.merging: DropHighlight {
                     x: root.edge;
-                    y: root.edge + root.target-index * root.row-height;
+                    y: root.edge + root.hover-index * root.row-height;
                     width: Math.max(0, scroll.visible-width - 2 * root.edge);
                     height: root.row-height;
                 }
 
-                for app[index] in root.apps: AppListItem {
+                if root.dragging && !root.merging: DropLine {
+                    x: root.edge;
+                    y: root.edge + root.insert-index * root.row-height - self.height / 2;
+                    width: Math.max(0, scroll.visible-width - 2 * root.edge);
+                }
+
+                for item[index] in root.items: AppListItem {
                     x: root.edge;
                     y: root.edge + index * root.row-height;
                     width: Math.max(0, scroll.visible-width - 2 * root.edge);
                     height: root.row-height;
-                    app: app;
+                    app: item.app;
+                    is-folder: item.is-folder;
+                    folder: item.folder;
                     show-icon: root.show-icon;
                     on-home: true;
                     home-enabled: true;
                     draggable: true;
-                    content-hidden: root.is-dragged(app);
-                    drag-started(x, y) => { root.start-drag(app, x, y); }
+                    content-hidden: root.is-dragged(item);
+                    open-folder => { root.open-folder(item.folder); }
+                    drag-started(x, y) => { root.start-drag(item, x, y); }
                     drag-moved(x, y) => {
                         root.drag-x = x;
                         root.drag-y = y;
@@ -388,8 +478,12 @@ export component HomePage inherits Rectangle {
     in property <[HomeItem]> dock-items: [];
     in property <int> columns: 4;
     in property <int> pages: 1;
-    // List views: every Home app, in order.
-    in property <[AppItem]> list-items: [];
+    // Used cells of the grid and dock (see `HomeGrid`).
+    in property <int> rows: 1;
+    in property <[bool]> cells: [];
+    in property <[bool]> dock-cells: [];
+    // List views: every Home entry (apps and folders), in order.
+    in property <[HomeItem]> list-items: [];
     in property <AppsView> view: AppsView.grid;
     in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
     in property <length> top-inset: 0px;
@@ -399,6 +493,8 @@ export component HomePage inherits Rectangle {
     in-out property <int> current-page: 0;
 
     callback open-apps-menu(focus-search: bool);
+    // A folder was tapped.
+    callback open-folder(folder: FolderItem);
 
     // Abort a drag in progress (e.g. the launcher went to the background).
     public function cancel-drag() {
@@ -413,7 +509,7 @@ export component HomePage inherits Rectangle {
 
     property <bool> grid: root.view == AppsView.grid;
     property <bool> dragging: false;
-    property <AppItem> drag-app;
+    property <HomeItem> drag-item;
     property <length> drag-x;
     property <length> drag-y;
     // While dragging there's one more (empty) page, to move an app to a new page.
@@ -521,35 +617,40 @@ export component HomePage inherits Rectangle {
                 items: root.items;
                 dock-items: root.dock-items;
                 columns: root.columns;
+                home-rows: root.rows;
+                home-cells: root.cells;
+                dock-cells: root.dock-cells;
                 rows-fit(rows) => { HomeActions.rows-fit(rows); }
                 page-count: root.page-count;
                 current-page <=> root.current-page;
                 swipe-offset: root.swipe-offset;
                 swiping: swipe.swiping;
                 dragging <=> root.dragging;
-                drag-app <=> root.drag-app;
+                drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
                 empty-long-pressed(x, y) => { root.show-menu(x, y); }
+                open-folder(folder) => { root.open-folder(folder); }
             }
 
             if !root.grid: HomeList {
                 vertical-stretch: 1;
-                apps: root.list-items;
+                items: root.list-items;
                 swipe-distance: root.swipe-distance;
                 show-icon: root.view == AppsView.list;
                 dragging <=> root.dragging;
-                drag-app <=> root.drag-app;
+                drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
                 empty-long-pressed(x, y) => { root.show-menu(x, y); }
+                open-folder(folder) => { root.open-folder(folder); }
                 swiped-down => { root.swipe-down(); }
                 open-apps-menu(focus-search) => { root.open-apps-menu(focus-search); }
             }
         }
     }
 
-    // The app being dragged, under the finger.
+    // The entry being dragged, under the finger.
     if root.dragging: Rectangle {
         width: Math.max(96px, AppsLayout.item-size);
         height: Math.max(96px, AppsLayout.item-size);
@@ -563,15 +664,21 @@ export component HomePage inherits Rectangle {
             HorizontalLayout {
                 alignment: center;
 
-                Image {
-                    source: root.drag-app.icon;
+                if !root.drag-item.is-folder: Image {
+                    source: root.drag-item.app.icon;
+                    width: root.drag-icon-size;
+                    height: root.drag-icon-size;
+                }
+                if root.drag-item.is-folder: FolderIcon {
+                    apps: root.drag-item.folder.apps;
                     width: root.drag-icon-size;
                     height: root.drag-icon-size;
                 }
             }
 
             WallpaperLabel {
-                text: root.drag-app.title;
+                text: !root.drag-item.is-folder ? root.drag-item.app.title
+                    : root.drag-item.folder.title != "" ? root.drag-item.folder.title : I18n.t("home.folder");
                 font-size: GridMetrics.label-font-size;
                 horizontal-alignment: center;
                 wrap: AppsLayout.label-lines > 1 ? TextWrap.word-wrap : TextWrap.no-wrap;

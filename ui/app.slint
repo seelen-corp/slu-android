@@ -1,15 +1,16 @@
 import { HomePage } from "pages/home.slint";
 import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
+import { FolderPage } from "pages/folder.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "types.slint";
-import { LauncherActions } from "app-actions.slint";
+import { AppItem, FolderItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "types.slint";
+import { HomeActions, LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
 export { AppsLayout } from "apps-layout.slint";
-export { AppItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons }
+export { AppItem, FolderItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
@@ -22,8 +23,17 @@ export component MainWindow inherits Window {
     in property <[HomeItem]> dock-items: [];
     in property <int> home-columns: 4;
     in property <int> home-pages: 1;
-    // Home, list views: every Home app, in order.
-    in property <[AppItem]> home-list: [];
+    // Home, grid view: used cells, `home-cells[(page * home-rows + row) * columns + col]`
+    // and `dock-cells[col]` (where a drop can make a folder).
+    in property <int> home-rows: 1;
+    in property <[bool]> home-cells: [];
+    in property <[bool]> dock-cells: [];
+    // Home, list views: every Home entry (apps and folders), in order.
+    in property <[HomeItem]> home-list: [];
+    // The folder view: shown over Home while `folder-open`. Rust keeps the
+    // folder up to date, and closes the view if the folder is gone.
+    in-out property <bool> folder-open: false;
+    in-out property <FolderItem> open-folder;
 
     // The system wallpaper is drawn behind the window (wallpaper theme).
     background: transparent;
@@ -39,17 +49,35 @@ export component MainWindow inherits Window {
             LauncherActions.search("");
         }
         root.apps-menu-open = false;
+        root.close-folder();
         home.cancel-drag();
         key-handler.focus();
     }
 
     // The Home button was pressed while the launcher was already in front: close
-    // the Apps Menu, or go back to the first page.
+    // the Apps Menu or the folder, or go back to the first page.
     public function home-pressed() {
-        if root.apps-menu-open {
+        if root.apps-menu-open || root.folder-open {
             root.show-home();
         } else {
             home.go-to-first-page();
+        }
+    }
+
+    function show-folder(folder: FolderItem) {
+        root.open-folder = folder;
+        root.folder-open = true;
+        folder-page.reset();
+        HomeActions.folder-shown(folder.id);
+    }
+
+    // Saves the title being edited first.
+    function close-folder() {
+        if root.folder-open {
+            folder-page.commit-title();
+            root.folder-open = false;
+            HomeActions.folder-shown(-1);
+            key-handler.focus();
         }
     }
 
@@ -68,7 +96,7 @@ export component MainWindow inherits Window {
     key-handler := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Back {
-                if root.home-enabled && root.apps-menu-open {
+                if root.home-enabled && (root.apps-menu-open || root.folder-open) {
                     root.show-home();
                 }
                 // Consumed even on Home: the launcher is never closed by Back.
@@ -77,14 +105,18 @@ export component MainWindow inherits Window {
             reject
         }
 
-        // Kept alive while the Apps Menu is open (keeps its page), but hidden.
+        // Kept alive while the Apps Menu or a folder is open (keeps its page), but hidden.
         home := HomePage {
-            visible: root.home-enabled && !root.apps-menu-open;
+            visible: root.home-enabled && !root.apps-menu-open && !root.folder-open;
             items: root.home-items;
             dock-items: root.dock-items;
             columns: root.home-columns;
             pages: root.home-pages;
+            rows: root.home-rows;
+            cells: root.home-cells;
+            dock-cells: root.dock-cells;
             list-items: root.home-list;
+            open-folder(folder) => { root.show-folder(folder); }
             view: root.apps-view;
             swipe-down-action: root.swipe-down-action;
             top-inset: root.safe-area-insets.top;
@@ -92,6 +124,18 @@ export component MainWindow inherits Window {
             left-inset: root.safe-area-insets.left;
             right-inset: root.safe-area-insets.right;
             open-apps-menu(focus-search) => { root.open-apps-menu(focus-search); }
+        }
+
+        // Always alive (its title input must be reachable to save it), hidden
+        // while closed.
+        folder-page := FolderPage {
+            visible: root.home-enabled && root.folder-open && !root.apps-menu-open;
+            folder: root.open-folder;
+            view: root.apps-view;
+            columns: root.home-columns;
+            top-inset: root.safe-area-insets.top;
+            bottom-inset: root.safe-area-insets.bottom;
+            close => { root.show-home(); }
         }
 
         if !root.home-enabled || root.apps-menu-open: menu := AppsMenuPage {

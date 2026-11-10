@@ -12,9 +12,23 @@ export struct AppItem {
     pinned: bool,
 }
 
-// An app placed on Home: a cell of a grid page, or a slot of the dock.
+// Several apps in one slot of Home (`config::Folder`).
+export struct FolderItem {
+    id: int,
+    // Set by the user; empty shows `home.folder`.
+    title: string,
+    // Installed apps only, in order.
+    apps: [AppItem],
+}
+
+// An app or folder placed on Home: a cell of a grid page, or a slot of the
+// dock. In the list views, the same entries in list order.
 export struct HomeItem {
+    is-folder: bool,
+    // When not `is-folder`.
     app: AppItem,
+    // When `is-folder`.
+    folder: FolderItem,
     dock: bool,
     // Grid page (ignored in the dock).
     page: int,

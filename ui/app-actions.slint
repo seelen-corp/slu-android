@@ -1,26 +1,40 @@
-import { AppItem } from "types.slint";
+import { AppItem, HomeItem } from "types.slint";
 
 // Actions on an app, implemented in Rust. Called by every app entry (list row,
 // grid cell, Home cell) wherever it is shown.
 export global AppActions {
     callback launch(app: AppItem);
     callback add-to-home(app: AppItem);
+    // Also from the folder it's in.
     callback remove-from-home(app: AppItem);
+    // Out of its folder, to the first free cell of Home.
+    callback remove-from-folder(app: AppItem);
     callback app-info(app: AppItem);
     callback uninstall(app: AppItem);
 }
 
-// Home layout edits, implemented in Rust.
+// Home layout edits, implemented in Rust. Entries (apps or folders) are given as
+// the `HomeItem` the UI shows.
 export global HomeActions {
-    // Moves an app already on Home to a grid cell or dock slot. If another app is
+    // Moves an entry of Home to a grid cell or dock slot. If another one is
     // there, both swap places.
-    callback move-to(app: AppItem, dock: bool, page: int, col: int, row: int);
-    // List views: moves an app to another position of the list (the other apps
-    // shift, keeping the cells the layout uses).
-    callback move-to-index(app: AppItem, index: int);
+    callback move-to(item: HomeItem, dock: bool, page: int, col: int, row: int);
+    // Drops an entry on the one in a grid cell or dock slot: an app dropped on
+    // an app makes a folder with both; on a folder, it joins it. Otherwise
+    // (a folder dropped, an empty slot) the same as `move-to`.
+    callback merge-into(item: HomeItem, dock: bool, page: int, col: int, row: int);
+    // List views: moves an entry right before the one at `index` of the list
+    // (the length puts it last); the others shift, keeping the cells the layout
+    // uses.
+    callback move-to-index(item: HomeItem, index: int);
     // Grid view, portrait: the number of rows that fit on screen changed (the
     // item size or the screen). Rust saves it and moves apps that no longer fit.
     callback rows-fit(rows: int);
+    // The folder view opened (Rust keeps it up to date) or closed (-1).
+    callback folder-shown(id: int);
+    callback rename-folder(id: int, title: string);
+    // Removes a folder; its apps go back to Home (the first one in its place).
+    callback disband-folder(id: int);
 }
 
 // Launcher/system actions, implemented in Rust.

@@ -2,12 +2,12 @@ mod error;
 #[path = "system-modules/mod.rs"]
 mod system_modules;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use error::Result;
 use slint::{ComponentHandle, ModelRc, VecModel};
-use system_modules::config::{AppRef, Slot};
+use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
 use system_modules::{activity, android_ctx, apps, config, icons, locale, system, theme};
 
 slint::include_modules!();
@@ -141,6 +141,29 @@ impl AppItem {
     }
 }
 
+impl HomeItem {
+    fn key(&self) -> EntryKey {
+        if self.is_folder {
+            EntryKey::Folder(to_index(self.folder.id))
+        } else {
+            EntryKey::App(self.app.app_ref())
+        }
+    }
+}
+
+/// A grid cell (`dock` false) or dock slot, as the UI gives them.
+fn slot(dock: bool, page: i32, col: i32, row: i32) -> Slot {
+    if dock {
+        Slot::Dock { col: to_index(col) }
+    } else {
+        Slot::Grid {
+            page: to_index(page),
+            row: to_index(row),
+            col: to_index(col),
+        }
+    }
+}
+
 /// Largest logical size (px) app icons are shown at in the current view, so
 /// they're only ever scaled down. `None` in the text list (no icons). In the
 /// grid the item size is the icon size (`GridMetrics.icon-size`, only smaller
@@ -166,6 +189,33 @@ thread_local! {
     static QUERY: RefCell<String> = const { RefCell::new(String::new()) };
     /// The main window, for calls coming from Java (`nativeOnHomeIntent`).
     static MAIN_WINDOW: RefCell<Option<slint::Weak<MainWindow>>> = const { RefCell::new(None) };
+    /// Folder shown in the folder view, kept up to date by `refresh`.
+    static OPEN_FOLDER: Cell<Option<u32>> = const { Cell::new(None) };
+    /// The icon shape alone (`AppsLayout.icon-shape`), by size and style.
+    static ICON_SHAPE: RefCell<Option<(u32, config::IconStyle, slint::Image)>> = const { RefCell::new(None) };
+}
+
+/// The icon shape at `size` physical pixels, for the folders.
+fn icon_shape(size: u32, style: config::IconStyle) -> slint::Image {
+    if let Some(image) = ICON_SHAPE.with_borrow(|shape| {
+        shape
+            .as_ref()
+            .filter(|(s, st, _)| *s == size && *st == style)
+            .map(|(_, _, image)| image.clone())
+    }) {
+        return image;
+    }
+    match icons::load_shape(size, style) {
+        Ok(buffer) => {
+            let image = slint::Image::from_rgba8(buffer);
+            ICON_SHAPE.with_borrow_mut(|shape| *shape = Some((size, style, image.clone())));
+            image
+        }
+        Err(err) => {
+            log::error!("failed to render the icon shape: {err}");
+            slint::Image::default()
+        }
+    }
 }
 
 type IconKey = (String, String, u32, config::IconStyle);
@@ -326,44 +376,98 @@ fn refresh(window: &MainWindow) -> Result<()> {
 
     // Entries of apps that are not installed are skipped, not deleted: they come
     // back if the app is reinstalled (or mid-update, when it's briefly gone).
+    // Folders show their installed apps; with none, they're skipped too.
+    let home_item = |entry: &config::HomeEntry| -> Option<HomeItem> {
+        let (is_folder, app, folder) = match &entry.content {
+            HomeContent::App(app) => (false, find(app)?, FolderItem::default()),
+            HomeContent::Folder(folder) => {
+                let apps: Vec<AppItem> = folder.apps.iter().filter_map(&find).collect();
+                if apps.is_empty() {
+                    return None;
+                }
+                let folder = FolderItem {
+                    id: folder.id as i32,
+                    title: folder.title.as_str().into(),
+                    apps: ModelRc::new(VecModel::from(apps)),
+                };
+                (true, AppItem::default(), folder)
+            }
+        };
+        let (dock, page, col, row) = match entry.slot {
+            Slot::Grid { page, row, col } => (false, page, col, row),
+            Slot::Dock { col } => (true, 0, col, 0),
+        };
+        Some(HomeItem {
+            is_folder,
+            app,
+            folder,
+            dock,
+            page: page as i32,
+            col: col as i32,
+            row: row as i32,
+        })
+    };
+    let (rows, columns) = (config.home_rows as usize, config.home_columns as usize);
+    let mut home_cells = vec![false; config.home_pages() as usize * rows * columns];
+    let mut dock_cells = vec![false; columns];
     let mut home_items = Vec::new();
     let mut dock_items = Vec::new();
     for entry in &config.home {
-        let Some(app) = find(&entry.app) else {
+        let Some(item) = home_item(entry) else {
             continue;
         };
-        match entry.slot {
-            Slot::Grid { page, row, col } => home_items.push(HomeItem {
-                app,
-                dock: false,
-                page: page as i32,
-                col: col as i32,
-                row: row as i32,
-            }),
-            Slot::Dock { col } => dock_items.push(HomeItem {
-                app,
-                dock: true,
-                page: 0,
-                col: col as i32,
-                row: 0,
-            }),
+        let (page, row, col) = (item.page as usize, item.row as usize, item.col as usize);
+        if item.dock {
+            if let Some(cell) = dock_cells.get_mut(col) {
+                *cell = true;
+            }
+            dock_items.push(item);
+        } else {
+            if row < rows
+                && col < columns
+                && let Some(cell) = home_cells.get_mut((page * rows + row) * columns + col)
+            {
+                *cell = true;
+            }
+            home_items.push(item);
         }
     }
-    let home_list: Vec<AppItem> = config
+    let home_list: Vec<HomeItem> = config
         .list_order()
         .into_iter()
-        .filter_map(|i| find(&config.home[i].app))
+        .filter_map(|i| home_item(&config.home[i]))
         .collect();
+
+    // The open folder: updated, or closed if it's gone (e.g. left with one app).
+    if let Some(id) = OPEN_FOLDER.get() {
+        let open = home_items
+            .iter()
+            .chain(&dock_items)
+            .find(|item| item.is_folder && item.folder.id == id as i32);
+        match open {
+            Some(item) => window.set_open_folder(item.folder.clone()),
+            None => {
+                OPEN_FOLDER.set(None);
+                window.set_folder_open(false);
+            }
+        }
+    }
 
     window.set_launcher_screens(config.launcher_screens.into());
     window.set_apps_view(config.apps_view.into());
     window.set_swipe_down_action(config.swipe_down.into());
     window.set_home_columns(config.home_columns as i32);
     window.set_home_pages(config.home_pages() as i32);
+    window.set_home_rows(config.home_rows as i32);
+    window.set_home_cells(ModelRc::new(VecModel::from(home_cells)));
+    window.set_dock_cells(ModelRc::new(VecModel::from(dock_cells)));
     window.set_home_items(ModelRc::new(VecModel::from(home_items)));
     window.set_dock_items(ModelRc::new(VecModel::from(dock_items)));
     window.set_home_list(ModelRc::new(VecModel::from(home_list)));
     let layout = window.global::<AppsLayout>();
+    layout.set_icon_shape(
+        icon_size.map_or_else(slint::Image::default, |size| icon_shape(size, style)),
+    );
     layout.set_item_size(config.item_size(config.apps_view) as f32);
     layout.set_padding(config.apps_padding as f32);
     layout.set_label_lines(config.label_lines as i32);
@@ -550,26 +654,43 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
         });
     });
 
+    let weak = window.as_weak();
+    actions.on_remove_from_folder(move |app| {
+        edit_home(&weak, "remove app from folder", |config| {
+            config.remove_from_folder(&app.app_ref(), is_installed)
+        });
+    });
+
     let home = window.global::<HomeActions>();
     let weak = window.as_weak();
-    home.on_move_to(move |app, dock, page, col, row| {
-        let slot = if dock {
-            Slot::Dock { col: to_index(col) }
-        } else {
-            Slot::Grid {
-                page: to_index(page),
-                row: to_index(row),
-                col: to_index(col),
-            }
-        };
+    home.on_move_to(move |item, dock, page, col, row| {
         edit_home(&weak, "move app on home", |config| {
-            config.move_to(&app.app_ref(), slot, is_installed)
+            config.move_to(&item.key(), slot(dock, page, col, row), is_installed)
         });
     });
     let weak = window.as_weak();
-    home.on_move_to_index(move |app, index| {
+    home.on_merge_into(move |item, dock, page, col, row| {
+        edit_home(&weak, "make folder", |config| {
+            config.merge_into(&item.key(), slot(dock, page, col, row), is_installed)
+        });
+    });
+    let weak = window.as_weak();
+    home.on_move_to_index(move |item, index| {
         edit_home(&weak, "reorder home", |config| {
-            config.move_to_index(&app.app_ref(), to_index(index) as usize, is_installed)
+            config.move_to_index(&item.key(), to_index(index) as usize, is_installed)
+        });
+    });
+    let weak = window.as_weak();
+    home.on_disband_folder(move |id| {
+        edit_home(&weak, "disband folder", |config| {
+            config.disband_folder(to_index(id), is_installed)
+        });
+    });
+    home.on_folder_shown(|id| OPEN_FOLDER.set((id >= 0).then_some(id as u32)));
+    let weak = window.as_weak();
+    home.on_rename_folder(move |id, title| {
+        edit_home(&weak, "rename folder", |config| {
+            config.rename_folder(to_index(id), &title)
         });
     });
     let weak = window.as_weak();

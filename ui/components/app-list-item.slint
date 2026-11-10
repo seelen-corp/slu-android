@@ -2,6 +2,7 @@ import { Tokens } from "../tokens.slint";
 import { AppsLayout } from "../apps-layout.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
+import { FolderIcon } from "folder-icon.slint";
 
 export global ListMetrics {
     out property <relative-font-size> label-font-size: 1.125rem;
@@ -51,8 +52,14 @@ export component AppListItem inherits AppItemBase {
         if root.show-icon: VerticalLayout {
             alignment: center;
 
-            Image {
+            if !root.is-folder: Image {
                 source: root.app.icon;
+                width: ListMetrics.icon-size();
+                height: ListMetrics.icon-size();
+                visible: !root.content-hidden;
+            }
+            if root.is-folder: FolderIcon {
+                apps: root.folder.apps;
                 width: ListMetrics.icon-size();
                 height: ListMetrics.icon-size();
                 visible: !root.content-hidden;
@@ -65,7 +72,7 @@ export component AppListItem inherits AppItemBase {
 
             WallpaperLabel {
                 height: AppsLayout.label-lines * metrics.preferred-height;
-                text: root.app.title;
+                text: root.title;
                 font-size: ListMetrics.label-font-size;
                 wrap: AppsLayout.label-lines > 1 ? TextWrap.word-wrap : TextWrap.no-wrap;
                 visible: !root.content-hidden;

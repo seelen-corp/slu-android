@@ -1,0 +1,34 @@
+import { Tokens } from "../tokens.slint";
+import { AppsLayout } from "../apps-layout.slint";
+import { AppItem } from "../types.slint";
+
+// A folder's icon, drawn like an app icon of its size: the icon shape of
+// Settings as a light surface, with the icons of its first 9 apps in a 3x3
+// grid inside.
+export component FolderIcon inherits Rectangle {
+    in property <[AppItem]> apps;
+
+    // Side of the 3x3 grid: a fraction of the icon that fits inside every shape
+    // (a circle included), like the legacy icons wrapped by `icons.rs`.
+    property <length> grid-size: root.width * 0.7;
+    property <length> gap: root.grid-size / 16;
+    property <length> cell: (root.grid-size - 2 * root.gap) / 3;
+    property <length> grid-x: (root.width - root.grid-size) / 2;
+    property <length> grid-y: (root.height - root.grid-size) / 2;
+
+    Image {
+        width: 100%;
+        height: 100%;
+        source: AppsLayout.icon-shape;
+        colorize: Tokens.slu-std-bg-light-color;
+    }
+
+    for app[index] in root.apps: Image {
+        visible: index < 9;
+        x: root.grid-x + Math.mod(index, 3) * (root.cell + root.gap);
+        y: root.grid-y + Math.floor(index / 3) * (root.cell + root.gap);
+        width: root.cell;
+        height: root.cell;
+        source: app.icon;
+    }
+}

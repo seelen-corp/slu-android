@@ -10,4 +10,7 @@ export global AppsLayout {
     in property <int> label-lines: 1;
     // Space around the apps (between them and the edges of their area).
     in property <length> padding: 8px;
+    // The icon shape alone (Settings > Icon shape), white: folders are drawn in
+    // it, tinted with a surface token. Empty in the text list (no icons).
+    in property <image> icon-shape;
 }

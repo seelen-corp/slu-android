@@ -3,6 +3,7 @@ import { AppsLayout } from "../apps-layout.slint";
 import { AppItem } from "../types.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
+import { FolderIcon } from "folder-icon.slint";
 
 export global GridMetrics {
     out property <relative-font-size> label-font-size: 0.875rem;
@@ -52,8 +53,13 @@ export component AppGridItem inherits AppItemBase {
             HorizontalLayout {
                 alignment: center;
 
-                Image {
+                if !root.is-folder: Image {
                     source: root.app.icon;
+                    width: root.icon-size;
+                    height: root.icon-size;
+                }
+                if root.is-folder: FolderIcon {
+                    apps: root.folder.apps;
                     width: root.icon-size;
                     height: root.icon-size;
                 }
@@ -61,7 +67,7 @@ export component AppGridItem inherits AppItemBase {
 
             if root.show-label: WallpaperLabel {
                 height: root.label-height;
-                text: root.app.title;
+                text: root.title;
                 font-size: GridMetrics.label-font-size;
                 horizontal-alignment: center;
                 vertical-alignment: top;
@@ -86,6 +92,8 @@ export component GridLabelMetrics inherits Text {
 export component AppGrid inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <bool> home-enabled: false;
+    // The apps of a folder of Home.
+    in property <bool> in-folder: false;
     in property <int> columns: 4;
 
     property <length> edge: AppsLayout.padding;
@@ -110,5 +118,7 @@ export component AppGrid inherits Rectangle {
         label-height: root.label-height;
         app: app;
         home-enabled: root.home-enabled;
+        on-home: root.in-folder;
+        in-folder: root.in-folder;
     }
 }

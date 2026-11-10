@@ -2,6 +2,8 @@ home:
   open_settings: Settings
   all_apps: All apps
   wallpaper: Wallpaper
+  folder: Folder
+  disband_folder: Disband folder
   empty: Swipe up to see all your apps. Long-press one and choose "Add to Home".
   empty_list: Tap "All apps" to see all your apps. Long-press one and choose "Add to Home".
 apps_menu:
@@ -10,6 +12,7 @@ apps_menu:
 app_actions:
   add_to_home: Add to Home
   remove_from_home: Remove from Home
+  remove_from_folder: Remove from folder
   app_info: App info
   uninstall: Uninstall
 settings:

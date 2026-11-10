@@ -204,7 +204,7 @@ impl AppRef {
     }
 }
 
-/// Where an app is placed on Home.
+/// Where an app (or folder) is placed on Home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slot {
     /// A cell of a grid page. Ordered page by page, row by row.
@@ -213,10 +213,74 @@ pub enum Slot {
     Dock { col: u32 },
 }
 
+impl Slot {
+    fn serialize(&self) -> String {
+        match *self {
+            Slot::Grid { page, row, col } => format!("grid,{page},{row},{col}"),
+            Slot::Dock { col } => format!("dock,{col}"),
+        }
+    }
+}
+
+/// Several apps in one slot of Home, opened as their own view. Made by dropping
+/// an app on another; a folder left with a single app becomes that app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Folder {
+    /// Unique among the folders on Home.
+    pub id: u32,
+    /// Set by the user; empty shows a default title.
+    pub title: String,
+    pub apps: Vec<AppRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeContent {
+    App(AppRef),
+    Folder(Folder),
+}
+
+/// Identifies an entry of Home (e.g. the one being dragged).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryKey {
+    App(AppRef),
+    Folder(u32),
+}
+
+impl HomeContent {
+    pub fn key(&self) -> EntryKey {
+        match self {
+            Self::App(app) => EntryKey::App(app.clone()),
+            Self::Folder(folder) => EntryKey::Folder(folder.id),
+        }
+    }
+
+    /// The app itself, or a folder with it.
+    fn contains(&self, app: &AppRef) -> bool {
+        match self {
+            Self::App(a) => a == app,
+            Self::Folder(folder) => folder.apps.contains(app),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HomeEntry {
-    pub app: AppRef,
+    pub content: HomeContent,
     pub slot: Slot,
+}
+
+impl HomeEntry {
+    fn app(app: AppRef, slot: Slot) -> Self {
+        Self {
+            content: HomeContent::App(app),
+            slot,
+        }
+    }
+}
+
+/// A folder title as saved: one line, without surrounding spaces.
+fn clean_title(title: &str) -> String {
+    title.replace(['\n', '\r'], " ").trim().to_owned()
 }
 
 pub const DEFAULT_HOME_COLUMNS: u32 = 4;
@@ -333,8 +397,15 @@ impl Config {
         }
     }
 
+    /// The app is on Home, by itself or in a folder.
     pub fn is_on_home(&self, app: &AppRef) -> bool {
-        self.home.iter().any(|entry| entry.app == *app)
+        self.home.iter().any(|entry| entry.content.contains(app))
+    }
+
+    fn position(&self, key: &EntryKey) -> Option<usize> {
+        self.home
+            .iter()
+            .position(|entry| entry.content.key() == *key)
     }
 
     fn fits(&self, slot: Slot) -> bool {
@@ -368,24 +439,32 @@ impl Config {
         self.drop_uninstalled(&installed);
         if !self.is_on_home(&app) {
             let slot = self.first_free_cell();
-            self.home.push(HomeEntry { app, slot });
+            self.home.push(HomeEntry::app(app, slot));
         }
         self.compact_pages();
     }
 
+    /// Removes an app from Home, also from the folder it's in.
     pub fn remove_from_home(&mut self, app: &AppRef, installed: impl Fn(&AppRef) -> bool) {
         self.drop_uninstalled(&installed);
-        self.home.retain(|entry| entry.app != *app);
+        self.home
+            .retain(|entry| entry.content != HomeContent::App(app.clone()));
+        for entry in &mut self.home {
+            if let HomeContent::Folder(folder) = &mut entry.content {
+                folder.apps.retain(|a| a != app);
+            }
+        }
+        self.dissolve_small_folders();
         self.compact_pages();
     }
 
-    /// Moves an app on Home to `slot`; if another app is there, they swap.
-    pub fn move_to(&mut self, app: &AppRef, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
+    /// Moves an entry of Home to `slot`; if another one is there, they swap.
+    pub fn move_to(&mut self, key: &EntryKey, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
         if !self.fits(slot) {
             return;
         }
         self.drop_uninstalled(&installed);
-        let Some(from) = self.home.iter().position(|entry| entry.app == *app) else {
+        let Some(from) = self.position(key) else {
             return;
         };
         let old_slot = self.home[from].slot;
@@ -396,28 +475,147 @@ impl Config {
         self.compact_pages();
     }
 
-    /// List views: moves an app to `index` of the Home list (`list_order`); the
-    /// apps in between shift. The set of used slots doesn't change, only which
-    /// app is in each one, so the grid layout keeps its shape.
+    /// Drops an entry of Home on the one at `slot`: an app dropped on another
+    /// app makes a folder with both (in that slot); dropped on a folder, it joins
+    /// it. Anything else (a folder, an empty slot) is a `move_to`.
+    pub fn merge_into(&mut self, key: &EntryKey, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
+        self.drop_uninstalled(&installed);
+        let target = self.home.iter().position(|entry| entry.slot == slot);
+        let (EntryKey::App(app), Some(from), Some(target)) = (key, self.position(key), target)
+        else {
+            return self.move_to(key, slot, installed);
+        };
+        if from == target {
+            return;
+        }
+        let id = self.next_folder_id();
+        let entry = &mut self.home[target];
+        let pair = match &mut entry.content {
+            HomeContent::Folder(folder) => {
+                folder.apps.push(app.clone());
+                None
+            }
+            HomeContent::App(other) => Some(vec![other.clone(), app.clone()]),
+        };
+        if let Some(apps) = pair {
+            entry.content = HomeContent::Folder(Folder {
+                id,
+                title: String::new(),
+                apps,
+            });
+        }
+        self.home.remove(from);
+        self.compact_pages();
+    }
+
+    /// Takes an app out of its folder, to the first free grid cell.
+    pub fn remove_from_folder(&mut self, app: &AppRef, installed: impl Fn(&AppRef) -> bool) {
+        self.drop_uninstalled(&installed);
+        let mut found = false;
+        for entry in &mut self.home {
+            if let HomeContent::Folder(folder) = &mut entry.content {
+                let before = folder.apps.len();
+                folder.apps.retain(|a| a != app);
+                found |= folder.apps.len() != before;
+            }
+        }
+        if !found {
+            return;
+        }
+        self.dissolve_small_folders();
+        let slot = self.first_free_cell();
+        self.home.push(HomeEntry::app(app.clone(), slot));
+        self.compact_pages();
+    }
+
+    /// Removes a folder, putting its apps back on Home: the first one in the
+    /// folder's slot, the others in the first free grid cells.
+    pub fn disband_folder(&mut self, id: u32, installed: impl Fn(&AppRef) -> bool) {
+        self.drop_uninstalled(&installed);
+        let Some(index) = self.position(&EntryKey::Folder(id)) else {
+            return;
+        };
+        let HomeContent::Folder(folder) = &mut self.home[index].content else {
+            return;
+        };
+        let mut apps = std::mem::take(&mut folder.apps).into_iter();
+        match apps.next() {
+            Some(first) => self.home[index].content = HomeContent::App(first),
+            None => {
+                self.home.remove(index);
+            }
+        }
+        for app in apps {
+            let slot = self.first_free_cell();
+            self.home.push(HomeEntry::app(app, slot));
+        }
+        self.compact_pages();
+    }
+
+    pub fn rename_folder(&mut self, id: u32, title: &str) {
+        for entry in &mut self.home {
+            if let HomeContent::Folder(folder) = &mut entry.content
+                && folder.id == id
+            {
+                folder.title = clean_title(title);
+            }
+        }
+    }
+
+    fn next_folder_id(&self) -> u32 {
+        self.home
+            .iter()
+            .filter_map(|entry| match &entry.content {
+                HomeContent::Folder(folder) => Some(folder.id + 1),
+                HomeContent::App(_) => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A folder left with a single app becomes that app (in the folder's slot);
+    /// an empty one is removed.
+    fn dissolve_small_folders(&mut self) {
+        self.home.retain_mut(|entry| {
+            let single = match &mut entry.content {
+                HomeContent::Folder(folder) if folder.apps.is_empty() => return false,
+                HomeContent::Folder(folder) if folder.apps.len() == 1 => folder.apps.pop(),
+                _ => None,
+            };
+            if let Some(app) = single {
+                entry.content = HomeContent::App(app);
+            }
+            true
+        });
+    }
+
+    /// List views: moves an entry so it's right before the one at `index` of the
+    /// Home list (`list_order`; the length puts it last); the entries in between
+    /// shift. The set of used slots doesn't change, only what is in each one, so
+    /// the grid layout keeps its shape.
     pub fn move_to_index(
         &mut self,
-        app: &AppRef,
+        key: &EntryKey,
         index: usize,
         installed: impl Fn(&AppRef) -> bool,
     ) {
         self.drop_uninstalled(&installed);
         let order = self.list_order();
         let slots: Vec<Slot> = order.iter().map(|&i| self.home[i].slot).collect();
-        let mut apps: Vec<AppRef> = order.iter().map(|&i| self.home[i].app.clone()).collect();
-        let Some(from) = apps.iter().position(|a| a == app) else {
+        let mut contents: Vec<HomeContent> = order
+            .iter()
+            .map(|&i| self.home[i].content.clone())
+            .collect();
+        let Some(from) = contents.iter().position(|c| c.key() == *key) else {
             return;
         };
-        let moved = apps.remove(from);
-        apps.insert(index.min(apps.len()), moved);
-        self.home = apps
+        let moved = contents.remove(from);
+        let index = if index > from { index - 1 } else { index };
+        contents.insert(index.min(contents.len()), moved);
+        self.home = contents
             .into_iter()
             .zip(slots)
-            .map(|(app, slot)| HomeEntry { app, slot })
+            .map(|(content, slot)| HomeEntry { content, slot })
             .collect();
     }
 
@@ -441,34 +639,62 @@ impl Config {
     }
 
     /// Fixes a layout that doesn't fit the grid size (e.g. it was made smaller in
-    /// Settings) or that is otherwise invalid: duplicated apps or slots, apps
-    /// outside the grid. Those apps go to the first free cells. Returns whether
-    /// anything changed.
+    /// Settings) or that is otherwise invalid: duplicated apps, folders or slots,
+    /// entries outside the grid (those go to the first free cells), folders with
+    /// fewer than two apps. Returns whether anything changed.
     pub fn normalize(&mut self) -> bool {
         let before = self.home.clone();
+        let mut seen_apps: Vec<AppRef> = Vec::new();
+        let mut seen_folders: Vec<u32> = Vec::new();
         let mut kept: Vec<HomeEntry> = Vec::with_capacity(self.home.len());
-        let mut misplaced: Vec<AppRef> = Vec::new();
-        for entry in std::mem::take(&mut self.home) {
-            if kept.iter().any(|k| k.app == entry.app) {
-                continue;
+        let mut misplaced: Vec<HomeContent> = Vec::new();
+        for mut entry in std::mem::take(&mut self.home) {
+            match &mut entry.content {
+                HomeContent::App(app) => {
+                    if seen_apps.contains(app) {
+                        continue;
+                    }
+                    seen_apps.push(app.clone());
+                }
+                HomeContent::Folder(folder) => {
+                    folder.apps.retain(|app| {
+                        let new = !seen_apps.contains(app);
+                        if new {
+                            seen_apps.push(app.clone());
+                        }
+                        new
+                    });
+                    if seen_folders.contains(&folder.id) {
+                        folder.id = seen_folders.iter().max().map_or(0, |id| id + 1);
+                    }
+                    seen_folders.push(folder.id);
+                }
             }
             if self.fits(entry.slot) && !kept.iter().any(|k| k.slot == entry.slot) {
                 kept.push(entry);
             } else {
-                misplaced.push(entry.app);
+                misplaced.push(entry.content);
             }
         }
         self.home = kept;
-        for app in misplaced {
+        for content in misplaced {
             let slot = self.first_free_cell();
-            self.home.push(HomeEntry { app, slot });
+            self.home.push(HomeEntry { content, slot });
         }
+        self.dissolve_small_folders();
         self.compact_pages();
         self.home != before
     }
 
     fn drop_uninstalled(&mut self, installed: impl Fn(&AppRef) -> bool) {
-        self.home.retain(|entry| installed(&entry.app));
+        self.home.retain_mut(|entry| match &mut entry.content {
+            HomeContent::App(app) => installed(app),
+            HomeContent::Folder(folder) => {
+                folder.apps.retain(|app| installed(app));
+                true
+            }
+        });
+        self.dissolve_small_folders();
     }
 
     /// Removes empty pages between used ones (renumbers the pages after them).
@@ -494,6 +720,8 @@ impl Config {
         let mut config = Config::default();
         // `pinned=` (older versions): apps in Home order, without a cell.
         let mut legacy_pinned: Vec<AppRef> = Vec::new();
+        // `folder_app=` lines, attached to their folder once all are read.
+        let mut folder_apps: Vec<(u32, AppRef)> = Vec::new();
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
@@ -574,6 +802,18 @@ impl Config {
                         config.home.push(entry);
                     }
                 }
+                "folder" => {
+                    if let Some(entry) = parse_folder_entry(value) {
+                        config.home.push(entry);
+                    }
+                }
+                "folder_app" => {
+                    if let Some((id, app)) = value.split_once(',')
+                        && let (Ok(id), Some(app)) = (id.parse::<u32>(), AppRef::parse(app))
+                    {
+                        folder_apps.push((id, app));
+                    }
+                }
                 "pinned" => {
                     if let Some(app) = AppRef::parse(value) {
                         legacy_pinned.push(app);
@@ -582,10 +822,22 @@ impl Config {
                 _ => {}
             }
         }
+        for (id, app) in folder_apps {
+            let folder = config
+                .home
+                .iter_mut()
+                .find_map(|entry| match &mut entry.content {
+                    HomeContent::Folder(folder) if folder.id == id => Some(folder),
+                    _ => None,
+                });
+            if let Some(folder) = folder {
+                folder.apps.push(app);
+            }
+        }
         for app in legacy_pinned {
             if !config.is_on_home(&app) {
                 let slot = config.first_free_cell();
-                config.home.push(HomeEntry { app, slot });
+                config.home.push(HomeEntry::app(app, slot));
             }
         }
         config
@@ -609,11 +861,22 @@ impl Config {
             self.label_lines,
         );
         for entry in &self.home {
-            let slot = match entry.slot {
-                Slot::Grid { page, row, col } => format!("grid,{page},{row},{col}"),
-                Slot::Dock { col } => format!("dock,{col}"),
-            };
-            text.push_str(&format!("home={slot},{}\n", entry.app.serialize()));
+            let slot = entry.slot.serialize();
+            match &entry.content {
+                HomeContent::App(app) => {
+                    text.push_str(&format!("home={slot},{}\n", app.serialize()));
+                }
+                HomeContent::Folder(folder) => {
+                    let id = folder.id;
+                    text.push_str(&format!(
+                        "folder={slot},{id},{}\n",
+                        clean_title(&folder.title)
+                    ));
+                    for app in &folder.apps {
+                        text.push_str(&format!("folder_app={id},{}\n", app.serialize()));
+                    }
+                }
+            }
         }
         text
     }
@@ -626,6 +889,27 @@ fn parse_in(value: &str, range: &std::ops::RangeInclusive<u32>) -> Option<u32> {
 
 /// `grid,<page>,<row>,<col>,<package>/<activity>` or `dock,<col>,<package>/<activity>`.
 fn parse_home_entry(value: &str) -> Option<HomeEntry> {
+    let (slot, app) = parse_slot(value)?;
+    Some(HomeEntry::app(AppRef::parse(app)?, slot))
+}
+
+/// `<slot>,<id>,<title>` (`<slot>` as in `parse_home_entry`); its apps are
+/// `folder_app=<id>,<package>/<activity>` lines.
+fn parse_folder_entry(value: &str) -> Option<HomeEntry> {
+    let (slot, rest) = parse_slot(value)?;
+    let (id, title) = rest.split_once(',').unwrap_or((rest, ""));
+    Some(HomeEntry {
+        content: HomeContent::Folder(Folder {
+            id: id.trim().parse().ok()?,
+            title: clean_title(title),
+            apps: Vec::new(),
+        }),
+        slot,
+    })
+}
+
+/// `grid,<page>,<row>,<col>,<rest>` or `dock,<col>,<rest>`.
+fn parse_slot(value: &str) -> Option<(Slot, &str)> {
     let (kind, rest) = value.split_once(',')?;
     let (slot, app) = match kind {
         "grid" => {
@@ -646,10 +930,7 @@ fn parse_home_entry(value: &str) -> Option<HomeEntry> {
         }
         _ => return None,
     };
-    Some(HomeEntry {
-        app: AppRef::parse(app)?,
-        slot,
-    })
+    Some((slot, app))
 }
 
 /// Must be called once from `android_main` with the app's internal data
@@ -704,13 +985,40 @@ mod tests {
         true
     }
 
+    fn key(n: u32) -> EntryKey {
+        EntryKey::App(app(n))
+    }
+
+    fn cell(page: u32, row: u32, col: u32) -> Slot {
+        Slot::Grid { page, row, col }
+    }
+
+    fn folder(config: &Config, slot: Slot) -> Option<&Folder> {
+        config
+            .home
+            .iter()
+            .find(|entry| entry.slot == slot)
+            .and_then(|entry| match &entry.content {
+                HomeContent::Folder(folder) => Some(folder),
+                HomeContent::App(_) => None,
+            })
+    }
+
     #[test]
     fn roundtrip() {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
         config.home.push(HomeEntry {
-            app: app(2),
+            content: HomeContent::App(app(2)),
             slot: Slot::Dock { col: 2 },
+        });
+        config.home.push(HomeEntry {
+            content: HomeContent::Folder(Folder {
+                id: 7,
+                title: "Games, fun = yes".to_owned(),
+                apps: vec![app(3), app(4)],
+            }),
+            slot: Slot::Dock { col: 0 },
         });
         config.home_rows = 9;
         config.swipe_down = SwipeDownAction::Notifications;
@@ -769,7 +1077,7 @@ mod tests {
         config.add_to_home(app(1), all);
         config.add_to_home(app(2), all);
         config.move_to(
-            &app(1),
+            &key(1),
             Slot::Grid {
                 page: 0,
                 row: 0,
@@ -794,9 +1102,9 @@ mod tests {
             }
         );
         // Alone on a new page 1 after page 0 is left empty: it becomes page 0.
-        config.move_to(&app(1), Slot::Dock { col: 0 }, all);
+        config.move_to(&key(1), Slot::Dock { col: 0 }, all);
         config.move_to(
-            &app(2),
+            &key(2),
             Slot::Grid {
                 page: 1,
                 row: 2,
@@ -821,13 +1129,13 @@ mod tests {
         for n in 1..=3 {
             config.add_to_home(app(n), all);
         }
-        config.move_to_index(&app(3), 0, all);
+        config.move_to_index(&key(3), 0, all);
         let order: Vec<_> = config
             .list_order()
             .into_iter()
-            .map(|i| config.home[i].app.clone())
+            .map(|i| config.home[i].content.key())
             .collect();
-        assert_eq!(order, vec![app(3), app(1), app(2)]);
+        assert_eq!(order, vec![key(3), key(1), key(2)]);
         assert_eq!(
             config.home[0].slot,
             Slot::Grid {
@@ -842,7 +1150,7 @@ mod tests {
     fn normalize_moves_out_of_grid() {
         let mut config = Config::default();
         config.home.push(HomeEntry {
-            app: app(1),
+            content: HomeContent::App(app(1)),
             slot: Slot::Grid {
                 page: 0,
                 row: 6,
@@ -850,7 +1158,7 @@ mod tests {
             },
         });
         config.home.push(HomeEntry {
-            app: app(2),
+            content: HomeContent::App(app(2)),
             slot: Slot::Grid {
                 page: 0,
                 row: 0,
@@ -865,6 +1173,122 @@ mod tests {
                 row: 0,
                 col: 1
             }
+        );
+        assert!(!config.normalize());
+    }
+
+    #[test]
+    fn app_dropped_on_app_makes_a_folder() {
+        let mut config = Config::default();
+        for n in 1..=3 {
+            config.add_to_home(app(n), all);
+        }
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        let made = folder(&config, cell(0, 0, 0)).expect("a folder");
+        assert_eq!(made.apps, vec![app(1), app(2)]);
+        assert_eq!(made.title, "");
+        assert!(config.is_on_home(&app(2)));
+        // Dropped on the folder: joins it.
+        config.merge_into(&key(3), cell(0, 0, 0), all);
+        let id = folder(&config, cell(0, 0, 0)).unwrap().id;
+        assert_eq!(folder(&config, cell(0, 0, 0)).unwrap().apps.len(), 3);
+        assert_eq!(config.home.len(), 1);
+        // A folder dropped on an app only swaps.
+        config.add_to_home(app(4), all);
+        config.merge_into(&EntryKey::Folder(id), cell(0, 0, 1), all);
+        assert!(folder(&config, cell(0, 0, 1)).is_some());
+        assert_eq!(config.home.len(), 2);
+    }
+
+    #[test]
+    fn folders_dissolve_with_one_app() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_to_home(app(2), all);
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config.remove_from_folder(&app(1), all);
+        // The folder became app 2, in its cell; app 1 went to the next free one.
+        assert_eq!(config.home[0], HomeEntry::app(app(2), cell(0, 0, 0)));
+        assert_eq!(config.home[1], HomeEntry::app(app(1), cell(0, 0, 1)));
+
+        config.merge_into(&key(1), cell(0, 0, 0), all);
+        config.remove_from_home(&app(2), all);
+        assert_eq!(config.home, vec![HomeEntry::app(app(1), cell(0, 0, 0))]);
+
+        config.add_to_home(app(2), all);
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config.remove_from_home(&app(1), |a| *a != app(2));
+        assert!(config.home.is_empty());
+    }
+
+    #[test]
+    fn disband_puts_the_apps_on_home() {
+        let mut config = Config::default();
+        for n in 1..=4 {
+            config.add_to_home(app(n), all);
+        }
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config.merge_into(&key(3), cell(0, 0, 0), all);
+        // Folder [1, 2, 3] in (0,0,0); app 4 in (0,0,3); (0,0,1) and (0,0,2) free.
+        let id = folder(&config, cell(0, 0, 0)).unwrap().id;
+        config.disband_folder(id, all);
+        assert_eq!(
+            config.home,
+            vec![
+                HomeEntry::app(app(1), cell(0, 0, 0)),
+                HomeEntry::app(app(4), cell(0, 0, 3)),
+                HomeEntry::app(app(2), cell(0, 0, 1)),
+                HomeEntry::app(app(3), cell(0, 0, 2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_folder_keeps_one_line() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_to_home(app(2), all);
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        let id = folder(&config, cell(0, 0, 0)).unwrap().id;
+        config.rename_folder(id, "  Work\nstuff ");
+        assert_eq!(folder(&config, cell(0, 0, 0)).unwrap().title, "Work stuff");
+    }
+
+    #[test]
+    fn move_to_index_inserts_before() {
+        let mut config = Config::default();
+        for n in 1..=3 {
+            config.add_to_home(app(n), all);
+        }
+        let order = |config: &Config| -> Vec<EntryKey> {
+            config
+                .list_order()
+                .into_iter()
+                .map(|i| config.home[i].content.key())
+                .collect()
+        };
+        config.move_to_index(&key(1), 3, all);
+        assert_eq!(order(&config), vec![key(2), key(3), key(1)]);
+        config.move_to_index(&key(1), 1, all);
+        assert_eq!(order(&config), vec![key(2), key(1), key(3)]);
+        // Right before or after itself: no change.
+        config.move_to_index(&key(1), 2, all);
+        assert_eq!(order(&config), vec![key(2), key(1), key(3)]);
+    }
+
+    #[test]
+    fn normalize_fixes_folders() {
+        let mut config = Config::parse(
+            "home=grid,0,0,0,p1/p1.Main\nfolder=grid,0,0,1,3,A\nfolder_app=3,p1/p1.Main\nfolder_app=3,p2/p2.Main\nfolder=grid,0,0,2,3,B\nfolder_app=3,p4/p4.Main\n",
+        );
+        // The apps go to the first folder with their id.
+        assert!(config.normalize());
+        // p1 is already on Home: it leaves the folder; the second folder (a
+        // duplicated id, no apps) is removed.
+        assert_eq!(config.home.len(), 2);
+        assert_eq!(
+            folder(&config, cell(0, 0, 1)).unwrap().apps,
+            vec![app(2), app(4)]
         );
         assert!(!config.normalize());
     }
