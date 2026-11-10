@@ -5,22 +5,52 @@ import { AppItem } from "../types.slint";
 // A folder's icon, drawn like an app icon of its size: the icon shape of
 // Settings as a light surface, with the icons of its first 9 apps in a 3x3
 // grid inside.
+// The icons of a large folder of Home can be tapped one by one (`app-at`,
+// `pressed-index`).
 export component FolderIcon inherits Rectangle {
     in property <[AppItem]> apps;
+    // App whose icon is being pressed (-1: none), for its pressed overlay.
+    in property <int> pressed-index: -1;
 
     // Side of the 3x3 grid: a fraction of the icon that fits inside every shape
     // (a circle included), like the legacy icons wrapped by `icons.rs`.
     property <length> grid-size: root.width * 0.7;
     property <length> gap: root.grid-size / 16;
-    property <length> cell: (root.grid-size - 2 * root.gap) / 3;
+    property <length> cell: Math.max(0, (root.grid-size - 2 * root.gap) / 3);
     property <length> grid-x: (root.width - root.grid-size) / 2;
     property <length> grid-y: (root.height - root.grid-size) / 2;
+
+    // Index of the app whose icon is at (`x`, `y`) (window coordinates), or -1.
+    public pure function app-at(x: length, y: length) -> int {
+        let local-x = x - root.absolute-position.x - root.grid-x;
+        let local-y = y - root.absolute-position.y - root.grid-y;
+        let col = Math.floor(local-x / Math.max(1px, root.cell + root.gap));
+        let row = Math.floor(local-y / Math.max(1px, root.cell + root.gap));
+        let index = row * 3 + col;
+        if local-x < 0 || local-y < 0 || col > 2 || row > 2
+            || local-x - col * (root.cell + root.gap) > root.cell
+            || local-y - row * (root.cell + root.gap) > root.cell
+            || index >= Math.min(9, root.apps.length) {
+            return -1;
+        }
+        return index;
+    }
 
     Image {
         width: 100%;
         height: 100%;
         source: AppsLayout.icon-shape;
         colorize: Tokens.slu-std-bg-light-color;
+    }
+
+    // Pressed app icon (large folders).
+    if root.pressed-index >= 0 && root.pressed-index < 9: Rectangle {
+        x: root.grid-x + Math.mod(root.pressed-index, 3) * (root.cell + root.gap) - root.gap / 2;
+        y: root.grid-y + Math.floor(root.pressed-index / 3) * (root.cell + root.gap) - root.gap / 2;
+        width: root.cell + root.gap;
+        height: root.cell + root.gap;
+        border-radius: Tokens.radius-s;
+        background: Tokens.slu-std-ui-pressed-overlay;
     }
 
     for app[index] in root.apps: Image {

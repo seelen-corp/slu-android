@@ -4,6 +4,8 @@ home:
   wallpaper: Wallpaper
   folder: Folder
   disband_folder: Disband folder
+  enlarge_folder: Enlarge
+  shrink_folder: Shrink
   add_picture: Add image
   resize_picture: Resize
   delete_picture: Delete

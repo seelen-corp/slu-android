@@ -25,7 +25,7 @@ export component MainWindow inherits Window {
     in property <int> home-columns: 4;
     in property <int> home-pages: 1;
     // Home, grid view: used cells, `home-cells[(page * home-rows + row) * columns + col]`
-    // (0 free, 1 app or folder, 2 picture) and `dock-cells[col]` (where a drop
+    // (0 free, 1 app or folder, 2 picture, 3+ a large folder) and `dock-cells[col]` (where a drop
     // can make a folder).
     in property <int> home-rows: 1;
     in property <[int]> home-cells: [];

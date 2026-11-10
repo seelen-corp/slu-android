@@ -423,6 +423,7 @@ fn refresh(window: &MainWindow) -> Result<()> {
                     id: folder.id as i32,
                     title: folder.title.as_str().into(),
                     apps: ModelRc::new(VecModel::from(apps)),
+                    large: folder.large,
                 };
             }
             HomeContent::Image(image) => {
@@ -448,7 +449,8 @@ fn refresh(window: &MainWindow) -> Result<()> {
         })
     };
     let (rows, columns) = (config.home_rows as usize, config.home_columns as usize);
-    // 0 free, 1 app or folder, 2 picture (`HomeGrid.home-cells`).
+    // 0 free, 1 app or folder, 2 picture, 3 + 2 * dy + dx a cell of a large
+    // folder, `dx`/`dy` cells from its top-left one (`HomeGrid.home-cells`).
     let mut home_cells = vec![0; config.home_pages() as usize * rows * columns];
     let mut dock_cells = vec![false; columns];
     let mut home_items = Vec::new();
@@ -465,9 +467,15 @@ fn refresh(window: &MainWindow) -> Result<()> {
             dock_items.push(item);
             continue;
         }
-        let kind = if item.is_picture { 2 } else { 1 };
         for cell in entry.cells() {
             if let Slot::Grid { page, row, col } = cell {
+                let kind = if item.is_picture {
+                    2
+                } else if item.is_folder && item.folder.large {
+                    3 + 2 * (row as i32 - item.row) + (col as i32 - item.col)
+                } else {
+                    1
+                };
                 let (page, row, col) = (page as usize, row as usize, col as usize);
                 if row < rows
                     && col < columns
@@ -525,8 +533,9 @@ fn refresh(window: &MainWindow) -> Result<()> {
     window.set_dock_items(ModelRc::new(VecModel::from(dock_items)));
     window.set_home_list(ModelRc::new(VecModel::from(home_list)));
     let layout = window.global::<AppsLayout>();
+    // Twice the icon size: large folders (2x2 cells) draw it about that big.
     layout.set_icon_shape(
-        icon_size.map_or_else(slint::Image::default, |size| icon_shape(size, style)),
+        icon_size.map_or_else(slint::Image::default, |size| icon_shape(size * 2, style)),
     );
     layout.set_item_size(config.item_size(config.apps_view) as f32);
     layout.set_padding(config.apps_padding as f32);
@@ -782,6 +791,15 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
     home.on_resize_picture(move |id, columns, rows| {
         edit_home(&weak, "resize picture", |config| {
             config.resize_image(to_index(id), to_index(columns), to_index(rows))
+        });
+    });
+    home.on_can_resize_folder(|id, large| {
+        SHOWN_CONFIG.with_borrow(|config| config.can_resize_folder(to_index(id), large))
+    });
+    let weak = window.as_weak();
+    home.on_resize_folder(move |id, large| {
+        edit_home(&weak, "resize folder", |config| {
+            config.resize_folder(to_index(id), large)
         });
     });
     let weak = window.as_weak();

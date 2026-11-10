@@ -24,6 +24,12 @@ export component AppItemBase inherits Rectangle {
     // Home screen enabled in Settings, so apps can be placed on it.
     in property <bool> home-enabled: false;
     in property <bool> draggable: false;
+    // A folder of the Home grid (not the dock or the list views): its menu can
+    // enlarge it to 2x2 cells or shrink it back.
+    in property <bool> resizable-folder: false;
+    // A large folder of Home: tapping one of its app icons launches that app
+    // (`folder-app-at`); tapping anywhere else opens the folder.
+    in property <bool> folder-apps-clickable: false;
 
     // An app (not a folder or a picture).
     property <bool> is-app: !root.is-folder && !root.is-picture;
@@ -40,6 +46,9 @@ export component AppItemBase inherits Rectangle {
     out property <bool> dragged: false;
 
     callback open-folder();
+    // With `folder-apps-clickable`, set by the visuals: index of the folder app
+    // whose icon is at a window position, or -1.
+    pure callback folder-app-at(x: length, y: length) -> int;
     // "Resize" of a picture's menu.
     callback resize-picture();
     // Drag of a `draggable` entry. Positions are in window coordinates.
@@ -62,9 +71,19 @@ export component AppItemBase inherits Rectangle {
     private property <length> pointer-x: root.absolute-position.x + touch.mouse-x;
     private property <length> pointer-y: root.absolute-position.y + touch.mouse-y;
 
+    // With `folder-apps-clickable`: the folder app whose icon is being pressed
+    // (-1: none, or it's not a tap anymore), for its pressed overlay.
+    out property <int> pressed-folder-app: root.folder-apps-clickable && touch.pressed && !root.long-pressed && !root.moved-away
+        ? root.folder-app-at(root.pointer-x, root.pointer-y) : -1;
+
     function activate() {
         if root.is-folder {
-            root.open-folder();
+            let index = root.folder-apps-clickable ? root.folder-app-at(root.pointer-x, root.pointer-y) : -1;
+            if index >= 0 {
+                AppActions.launch(root.folder.apps[index]);
+            } else {
+                root.open-folder();
+            }
         } else if !root.is-picture {
             AppActions.launch(root.app);
         }
@@ -147,7 +166,21 @@ export component AppItemBase inherits Rectangle {
         MenuSurface {
             min-width: 200px;
 
-            // A folder's only action; the pictures' two; the others are the app's.
+            // The folders' actions; the pictures' two; the others are the app's.
+            if root.is-folder && root.resizable-folder && !root.folder.large && HomeActions.can-resize-folder(root.folder.id, true): MenuItem {
+                text: I18n.t("home.enlarge_folder");
+                activated => {
+                    HomeActions.resize-folder(root.folder.id, true);
+                    menu.close();
+                }
+            }
+            if root.is-folder && root.resizable-folder && root.folder.large: MenuItem {
+                text: I18n.t("home.shrink_folder");
+                activated => {
+                    HomeActions.resize-folder(root.folder.id, false);
+                    menu.close();
+                }
+            }
             if root.is-folder: MenuItem {
                 text: I18n.t("home.disband_folder");
                 activated => {

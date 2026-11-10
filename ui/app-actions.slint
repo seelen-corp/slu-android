@@ -35,6 +35,10 @@ export global HomeActions {
     callback rename-folder(id: int, title: string);
     // Removes a folder; its apps go back to Home (the first one in its place).
     callback disband-folder(id: int);
+    // Whether a folder of the grid can be enlarged to 2x2 cells (`large`; the
+    // apps in the way move to free cells) or shrunk back to one.
+    pure callback can-resize-folder(id: int, large: bool) -> bool;
+    callback resize-folder(id: int, large: bool);
     // Whether `move-to` would move the entry there (its cells fit in the grid,
     // and no picture is on them).
     pure callback can-move(item: HomeItem, dock: bool, page: int, col: int, row: int) -> bool;

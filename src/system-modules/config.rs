@@ -231,7 +231,13 @@ pub struct Folder {
     /// Set by the user; empty shows a default title.
     pub title: String,
     pub apps: Vec<AppRef>,
+    /// Enlarged: it covers 2x2 cells of the grid (from its slot, the top-left
+    /// cell) instead of one. Never in the dock.
+    pub large: bool,
 }
+
+/// Cells covered by a large folder (`Folder::large`).
+pub const LARGE_FOLDER_SPAN: (u32, u32) = (2, 2);
 
 /// An image picked by the user, on the Home grid only (never in the dock or the
 /// list views). It covers `columns` x `rows` cells from its slot (the top-left
@@ -279,16 +285,24 @@ impl HomeContent {
         }
     }
 
-    /// Cells covered (columns, rows): only images cover more than one.
+    /// Cells covered (columns, rows): only images and large folders cover more
+    /// than one.
     pub fn span(&self) -> (u32, u32) {
         match self {
             Self::Image(image) => (image.columns, image.rows),
+            Self::Folder(folder) if folder.large => LARGE_FOLDER_SPAN,
             _ => (1, 1),
         }
     }
 
     pub fn is_image(&self) -> bool {
         matches!(self, Self::Image(_))
+    }
+
+    /// An image or a large folder: it never makes room for the others (see
+    /// `move_to`), and it's never in the dock.
+    fn keeps_its_cells(&self) -> bool {
+        self.is_image() || self.span() != (1, 1)
     }
 }
 
@@ -491,7 +505,7 @@ impl Config {
     }
 
     /// `content` can be at `slot`: inside the grid (all of its cells) or the
-    /// dock (not images).
+    /// dock (single cells only, not images).
     fn fits(&self, content: &HomeContent, slot: Slot) -> bool {
         let (columns, rows) = content.span();
         match slot {
@@ -501,7 +515,7 @@ impl Config {
                     && col + columns <= self.home_columns
                     && row + rows <= self.home_rows
             }
-            Slot::Dock { col } => !content.is_image() && col < self.home_columns,
+            Slot::Dock { col } => !content.keeps_its_cells() && col < self.home_columns,
         }
     }
 
@@ -542,10 +556,17 @@ impl Config {
         )
     }
 
-    /// An image bigger than the grid (e.g. made smaller in Settings) shrinks to it.
+    /// An image bigger than the grid (e.g. made smaller in Settings) shrinks to
+    /// it; a large folder that doesn't fit becomes a single cell.
     fn clamp_span(&self, content: &mut HomeContent) {
-        if let HomeContent::Image(image) = content {
-            (image.columns, image.rows) = self.clamped_span((image.columns, image.rows));
+        match content {
+            HomeContent::Image(image) => {
+                (image.columns, image.rows) = self.clamped_span((image.columns, image.rows));
+            }
+            HomeContent::Folder(folder) if folder.large => {
+                folder.large = self.clamped_span(LARGE_FOLDER_SPAN) == LARGE_FOLDER_SPAN;
+            }
+            _ => {}
         }
     }
 
@@ -577,7 +598,8 @@ impl Config {
     }
 
     /// The entry can be moved to `slot` (its top-left cell): all its cells fit,
-    /// and no image is on them (single-cell entries make room, see `move_to`).
+    /// and no image or large folder is on them (single-cell entries make room,
+    /// see `move_to`).
     pub fn can_move(&self, key: &EntryKey, slot: Slot) -> bool {
         let Some(from) = self.position(key) else {
             return false;
@@ -586,7 +608,7 @@ impl Config {
         let span = entry.content.span();
         self.fits(&entry.content, slot)
             && !self.home.iter().enumerate().any(|(i, other)| {
-                i != from && other.content.is_image() && other.overlaps(slot, span)
+                i != from && other.content.keeps_its_cells() && other.overlaps(slot, span)
             })
     }
 
@@ -649,6 +671,7 @@ impl Config {
                 id,
                 title: String::new(),
                 apps,
+                large: false,
             });
         }
         self.home.remove(from);
@@ -707,6 +730,85 @@ impl Config {
                 folder.title = clean_title(title);
             }
         }
+    }
+
+    /// Where a folder goes when enlarged (`resize_folder`): a 2x2 area of the
+    /// grid with its cell, preferably from it (to the right and down), without
+    /// images or large folders. Areas where nothing has to make room come first.
+    /// `None` in the dock, when it's already large, or when nothing fits.
+    fn large_folder_slot(&self, index: usize) -> Option<Slot> {
+        let entry = &self.home[index];
+        let Slot::Grid { page, row, col } = entry.slot else {
+            return None;
+        };
+        if entry.content.span() != (1, 1) {
+            return None;
+        }
+        let (columns, rows) = LARGE_FOLDER_SPAN;
+        let blocked = |slot: Slot, any_entry: bool| {
+            self.home.iter().enumerate().any(|(i, other)| {
+                i != index
+                    && (any_entry || other.content.keeps_its_cells())
+                    && other.overlaps(slot, LARGE_FOLDER_SPAN)
+            })
+        };
+        let candidates: Vec<Slot> = [(0, 0), (1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .filter(|&(dc, dr)| col >= dc && row >= dr)
+            .map(|(dc, dr)| (col - dc, row - dr))
+            .filter(|&(col, row)| {
+                col + columns <= self.home_columns && row + rows <= self.home_rows
+            })
+            .map(|(col, row)| Slot::Grid { page, row, col })
+            .filter(|&slot| !blocked(slot, false))
+            .collect();
+        candidates
+            .iter()
+            .copied()
+            .find(|&slot| !blocked(slot, true))
+            .or_else(|| candidates.first().copied())
+    }
+
+    /// A folder can be enlarged (`large`) or shrunk (not `large`).
+    pub fn can_resize_folder(&self, id: u32, large: bool) -> bool {
+        let Some(index) = self.position(&EntryKey::Folder(id)) else {
+            return false;
+        };
+        match &self.home[index].content {
+            HomeContent::Folder(folder) if folder.large == large => false,
+            HomeContent::Folder(_) => !large || self.large_folder_slot(index).is_some(),
+            _ => false,
+        }
+    }
+
+    /// Enlarges a folder to 2x2 cells (see `large_folder_slot`; the single-cell
+    /// entries there go to the first free cells) or shrinks it back to its
+    /// top-left cell.
+    pub fn resize_folder(&mut self, id: u32, large: bool) {
+        if !self.can_resize_folder(id, large) {
+            return;
+        }
+        let Some(index) = self.position(&EntryKey::Folder(id)) else {
+            return;
+        };
+        if large {
+            let Some(slot) = self.large_folder_slot(index) else {
+                return;
+            };
+            let displaced: Vec<usize> = (0..self.home.len())
+                .filter(|&i| i != index && self.home[i].overlaps(slot, LARGE_FOLDER_SPAN))
+                .collect();
+            self.home[index].slot = slot;
+            if let HomeContent::Folder(folder) = &mut self.home[index].content {
+                folder.large = true;
+            }
+            for i in displaced {
+                self.home[i].slot = self.first_free_cell();
+            }
+        } else if let HomeContent::Folder(folder) = &mut self.home[index].content {
+            folder.large = false;
+        }
+        self.compact_pages();
     }
 
     fn next_folder_id(&self) -> u32 {
@@ -843,12 +945,19 @@ impl Config {
         let moved = contents.remove(from);
         let index = if index > from { index - 1 } else { index };
         contents.insert(index.min(contents.len()), moved);
-        self.home = contents
+        // Images first: they keep their cells whatever lands next to them. A
+        // large folder that lands where its cells don't fit or are taken moves
+        // (or the entries in its way do, see `normalize`).
+        self.home = images
             .into_iter()
-            .zip(slots)
-            .map(|(content, slot)| HomeEntry { content, slot })
-            .chain(images)
+            .chain(
+                contents
+                    .into_iter()
+                    .zip(slots)
+                    .map(|(content, slot)| HomeEntry { content, slot }),
+            )
             .collect();
+        self.normalize();
     }
 
     /// Indexes of `home` in list order: the grid page by page, then the dock.
@@ -969,6 +1078,8 @@ impl Config {
         let mut legacy_pinned: Vec<AppRef> = Vec::new();
         // `folder_app=` lines, attached to their folder once all are read.
         let mut folder_apps: Vec<(u32, AppRef)> = Vec::new();
+        // `folder_large=<id>` lines: the large folders.
+        let mut large_folders: Vec<u32> = Vec::new();
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
@@ -1059,6 +1170,11 @@ impl Config {
                         config.home.push(entry);
                     }
                 }
+                "folder_large" => {
+                    if let Ok(id) = value.parse::<u32>() {
+                        large_folders.push(id);
+                    }
+                }
                 "folder_app" => {
                     if let Some((id, app)) = value.split_once(',')
                         && let (Ok(id), Some(app)) = (id.parse::<u32>(), AppRef::parse(app))
@@ -1084,6 +1200,11 @@ impl Config {
                 });
             if let Some(folder) = folder {
                 folder.apps.push(app);
+            }
+        }
+        for entry in &mut config.home {
+            if let HomeContent::Folder(folder) = &mut entry.content {
+                folder.large = large_folders.contains(&folder.id);
             }
         }
         for app in legacy_pinned {
@@ -1124,6 +1245,9 @@ impl Config {
                         "folder={slot},{id},{}\n",
                         clean_title(&folder.title)
                     ));
+                    if folder.large {
+                        text.push_str(&format!("folder_large={id}\n"));
+                    }
                     for app in &folder.apps {
                         text.push_str(&format!("folder_app={id},{}\n", app.serialize()));
                     }
@@ -1161,6 +1285,7 @@ fn parse_folder_entry(value: &str) -> Option<HomeEntry> {
             id: id.trim().parse().ok()?,
             title: clean_title(title),
             apps: Vec::new(),
+            large: false,
         }),
         slot,
     })
@@ -1294,6 +1419,7 @@ mod tests {
                 id: 7,
                 title: "Games, fun = yes".to_owned(),
                 apps: vec![app(3), app(4)],
+                large: false,
             }),
             slot: Slot::Dock { col: 0 },
         });
@@ -1669,6 +1795,103 @@ mod tests {
         assert_eq!(config.home[1], HomeEntry::app(app(1), cell(0, 2, 0)));
         assert_eq!(image_at(&config, 1).0, cell(0, 2, 1));
         assert!(!config.normalize());
+    }
+
+    /// Home with a folder of apps 1 and 2 at (0,0,0) (id 0) and apps 3.. `n`
+    /// after it.
+    fn with_folder(n: u32) -> Config {
+        let mut config = Config::default();
+        for i in 1..=n {
+            config.add_to_home(app(i), all);
+        }
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config
+    }
+
+    fn folder_at(config: &Config, id: u32) -> (Slot, (u32, u32)) {
+        let entry = &config.home[config.position(&EntryKey::Folder(id)).unwrap()];
+        (entry.slot, entry.content.span())
+    }
+
+    #[test]
+    fn large_folder_roundtrip_and_shrink() {
+        let mut config = with_folder(2);
+        assert!(!config.can_resize_folder(0, false));
+        config.resize_folder(0, true);
+        assert_eq!(folder_at(&config, 0), (cell(0, 0, 0), (2, 2)));
+        assert!(!config.can_resize_folder(0, true));
+        assert_eq!(Config::parse(&config.serialize()), config);
+        config.resize_folder(0, false);
+        assert_eq!(folder_at(&config, 0), (cell(0, 0, 0), (1, 1)));
+    }
+
+    #[test]
+    fn enlarged_folder_moves_apps_in_its_way() {
+        // Folder at (0,0,0), app 3 at (0,1,1), app 4 at (0,0,3).
+        let mut config = with_folder(4);
+        config.move_to(&key(3), cell(0, 1, 1), all);
+        config.resize_folder(0, true);
+        assert_eq!(folder_at(&config, 0), (cell(0, 0, 0), (2, 2)));
+        let slot_of = |config: &Config, n| config.home[config.position(&key(n)).unwrap()].slot;
+        assert_eq!(slot_of(&config, 3), cell(0, 0, 2));
+        assert_eq!(slot_of(&config, 4), cell(0, 0, 3));
+        // Nothing goes on it but into it.
+        assert!(!config.can_move(&key(3), cell(0, 1, 1)));
+        config.merge_into(&key(3), cell(0, 1, 1), all);
+        assert_eq!(config.home.len(), 2);
+    }
+
+    #[test]
+    fn enlarged_folder_grows_left_or_up_at_the_edges() {
+        let mut config = with_folder(2);
+        let last = cell(0, DEFAULT_HOME_ROWS - 1, DEFAULT_HOME_COLUMNS - 1);
+        config.move_to(&EntryKey::Folder(0), last, all);
+        config.resize_folder(0, true);
+        assert_eq!(
+            folder_at(&config, 0),
+            (
+                cell(0, DEFAULT_HOME_ROWS - 2, DEFAULT_HOME_COLUMNS - 2),
+                (2, 2)
+            )
+        );
+    }
+
+    #[test]
+    fn large_folders_stay_out_of_the_dock_and_images() {
+        let mut config = with_folder(2);
+        config.add_image("a.png", Some(cell(0, 0, 1)));
+        // Only up or left of the image: the folder's cell is on the top row.
+        assert!(!config.can_resize_folder(0, true));
+        config.move_to(&EntryKey::Folder(0), Slot::Dock { col: 0 }, all);
+        assert!(!config.can_resize_folder(0, true));
+        config.move_to(&EntryKey::Folder(0), cell(0, 2, 0), all);
+        config.resize_folder(0, true);
+        assert!(!config.can_move(&EntryKey::Folder(0), Slot::Dock { col: 0 }));
+        assert!(!config.can_move(&EntryKey::Folder(0), cell(0, 0, 0)));
+        assert!(config.can_move(&EntryKey::Folder(0), cell(0, 1, 2)));
+    }
+
+    #[test]
+    fn normalize_shrinks_large_folders_that_dont_fit() {
+        let mut config = with_folder(2);
+        config.resize_folder(0, true);
+        config.home_columns = 1;
+        assert!(config.normalize());
+        assert_eq!(folder_at(&config, 0), (cell(0, 0, 0), (1, 1)));
+    }
+
+    #[test]
+    fn list_reorder_keeps_large_folders_whole() {
+        // Folder 2x2 at (0,0,0), apps 3 and 4 after it.
+        let mut config = with_folder(4);
+        config.resize_folder(0, true);
+        config.move_to_index(&EntryKey::Folder(0), 2, all);
+        let mut taken: Vec<Slot> = config.home.iter().flat_map(|e| e.cells()).collect();
+        let count = taken.len();
+        taken.sort();
+        taken.dedup();
+        assert_eq!(taken.len(), count);
+        assert_eq!(folder_at(&config, 0).1, (2, 2));
     }
 
     #[test]

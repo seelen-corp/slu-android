@@ -19,6 +19,9 @@ export struct FolderItem {
     title: string,
     // Installed apps only, in order.
     apps: [AppItem],
+    // Enlarged: covers 2x2 cells of the Home grid (from its own, the top-left
+    // one). Never in the dock; the list views show it like any folder.
+    large: bool,
 }
 
 // An image picked by the user (`config::HomeImage`), on the Home grid only. It

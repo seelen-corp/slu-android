@@ -128,7 +128,8 @@ component HomeGrid inherits HomeLayoutBase {
     in property <length> swipe-offset: 0;
     in property <bool> swiping: false;
     // Used cells, from Rust: `home-cells[(page * home-rows + row) * columns + col]`
-    // (0 free, 1 app or folder, 2 picture) and `dock-cells[col]`.
+    // (0 free, 1 app or folder, 2 picture, 3 + 2 * dy + dx a large folder,
+    // `dx`/`dy` cells from its top-left one) and `dock-cells[col]`.
     in property <int> home-rows: 1;
     in property <[int]> home-cells: [];
     in property <[bool]> dock-cells: [];
@@ -155,22 +156,44 @@ component HomeGrid inherits HomeLayoutBase {
     property <length> pages-y: pages-area.absolute-position.y + root.edge;
     property <bool> over-dock: root.dragging && root.drag-y >= dock-area.absolute-position.y;
     property <bool> over-grid: root.dragging && !root.over-dock;
-    // A picture is dragged: it keeps the point it was grabbed by under the
-    // finger, and its target is the cell of its top-left corner.
+    // A picture or a large folder is dragged: it keeps the point it was grabbed
+    // by under the finger, and its target is the cell of its top-left corner.
     property <bool> drag-picture: root.drag-item.is-picture;
+    property <bool> drag-large-folder: root.is-large-folder(root.drag-item);
+    property <bool> drag-area: root.drag-picture || root.drag-large-folder;
+    // Grabbed point, from the top-left corner of the dragged entry's cell.
     property <length> grab-x;
     property <length> grab-y;
     // Cells the dragged entry covers.
-    property <int> span-cols: root.drag-picture ? root.drag-item.picture.columns : 1;
-    property <int> span-rows: root.drag-picture ? root.drag-item.picture.rows : 1;
-    // Cell under the finger (or of the dragged picture's corner); half of the
+    property <int> span-cols: root.drag-picture ? root.drag-item.picture.columns : root.item-cols(root.drag-item);
+    property <int> span-rows: root.drag-picture ? root.drag-item.picture.rows : root.item-rows(root.drag-item);
+    // Cell under the finger (or of the dragged area's corner); half of the
     // space around a cell counts as the cell.
-    property <int> target-col: root.drag-picture
+    property <int> target-col: root.drag-area
         ? clamp(round((root.drag-x - root.grab-x - root.pages-x) / Math.max(1px, root.cell-width)), 0, Math.max(0, root.columns - root.span-cols))
         : root.col-at(root.drag-x);
-    property <int> target-row: root.drag-picture
+    property <int> target-row: root.drag-area
         ? clamp(round((root.drag-y - root.grab-y - root.pages-y) / Math.max(1px, root.cell-height + root.row-gap)), 0, Math.max(0, root.row-count - root.span-rows))
         : root.row-at(root.drag-y);
+
+    // Large folders (`FolderItem.large`) cover 2x2 cells of the grid; their
+    // icon fills that area as much as the label below it leaves.
+    pure function is-large-folder(item: HomeItem) -> bool {
+        return item.is-folder && item.folder.large && !item.dock;
+    }
+    pure function item-cols(item: HomeItem) -> int {
+        return root.is-large-folder(item) ? 2 : 1;
+    }
+    pure function item-rows(item: HomeItem) -> int {
+        return root.is-large-folder(item) ? 2 : 1;
+    }
+    property <length> large-icon-size: Math.max(GridMetrics.min-icon-size, Math.min(
+        root.area-width(2) - 2 * GridMetrics.cell-padding,
+        root.area-height(2) - 2 * GridMetrics.cell-padding - Tokens.spacing-2xs - root.label-height));
+    // Offset of a large folder's icon inside its area (centered with its label,
+    // like `AppGridItem` does).
+    property <length> large-icon-x: (root.area-width(2) - root.large-icon-size) / 2;
+    property <length> large-icon-y: (root.area-height(2) - root.large-icon-size - Tokens.spacing-2xs - root.label-height) / 2;
     property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
 
     // Grid cell at a window position.
@@ -206,16 +229,22 @@ component HomeGrid inherits HomeLayoutBase {
         : root.drag-y - root.pages-y - root.target-row * (root.cell-height + root.row-gap);
     property <bool> over-icon: root.in-cell-x >= root.icon-left && root.in-cell-x <= root.icon-left + root.icon-size
         && root.in-cell-y >= GridMetrics.cell-padding && root.in-cell-y <= GridMetrics.cell-padding + root.icon-size;
-    // An app or folder is in the target cell/slot (not a picture).
-    property <bool> target-used: root.over-dock
-        ? root.dock-cells[root.target-slot]
-        : root.target-row < root.home-rows && root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col] == 1;
+    // What is in the target grid cell (see `home-cells`).
+    property <int> target-cell: root.target-row < root.home-rows ? root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col] : 0;
+    // An app or a single-cell folder is in the target cell/slot (not a picture).
+    property <bool> target-used: root.over-dock ? root.dock-cells[root.target-slot] : root.target-cell == 1;
+    // The target cell is part of a large folder: dropping an app anywhere on
+    // it puts the app inside. Its top-left cell:
+    property <bool> target-large-folder: !root.over-dock && root.target-cell >= 3;
+    property <int> target-folder-col: root.target-col - Math.mod(root.target-cell - 3, 2);
+    property <int> target-folder-row: root.target-row - Math.floor((root.target-cell - 3) / 2);
     // The dragged entry's own cell.
     property <bool> target-is-dragged: root.over-dock
         ? root.drag-item.dock && root.drag-item.col == root.target-slot
         : !root.drag-item.dock && root.drag-item.page == root.current-page && root.drag-item.col == root.target-col && root.drag-item.row == root.target-row;
     // Folders don't go into folders; pictures go into nothing.
-    property <bool> merging: root.dragging && !root.drag-item.is-folder && !root.drag-picture && root.over-icon && root.target-used && !root.target-is-dragged;
+    property <bool> merging: root.dragging && !root.drag-item.is-folder && !root.drag-picture
+        && ((root.over-icon && root.target-used && !root.target-is-dragged) || root.target-large-folder);
     // Dropping there does something: nothing goes onto a picture, and pictures
     // stay out of the dock and inside the grid.
     property <bool> drop-allowed: root.merging || (root.over-dock
@@ -357,7 +386,13 @@ component HomeGrid inherits HomeLayoutBase {
             }
 
             // Merge target: around the icon only.
-            if root.over-grid && root.merging: DropHighlight {
+            if root.over-grid && root.merging && root.target-large-folder: DropHighlight {
+                x: root.area-x(root.target-folder-col) + root.large-icon-x - GridMetrics.cell-padding;
+                y: root.area-y(root.target-folder-row) + root.large-icon-y - GridMetrics.cell-padding;
+                width: root.large-icon-size + 2 * GridMetrics.cell-padding;
+                height: root.large-icon-size + 2 * GridMetrics.cell-padding;
+            }
+            if root.over-grid && root.merging && !root.target-large-folder: DropHighlight {
                 x: root.edge + root.target-col * root.cell-width + root.icon-left - GridMetrics.cell-padding;
                 y: root.edge + root.target-row * (root.cell-height + root.row-gap);
                 width: root.icon-size + 2 * GridMetrics.cell-padding;
@@ -398,11 +433,11 @@ component HomeGrid inherits HomeLayoutBase {
                 }
 
                 for item in root.items: AppGridItem {
-                    x: item.page * pages-area.width + root.edge + item.col * root.cell-width;
-                    y: root.edge + item.row * (root.cell-height + root.row-gap);
-                    width: root.cell-width;
-                    height: root.cell-height;
-                    icon-size: root.icon-size;
+                    x: item.page * pages-area.width + root.area-x(item.col);
+                    y: root.area-y(item.row);
+                    width: root.area-width(root.item-cols(item));
+                    height: root.area-height(root.item-rows(item));
+                    icon-size: root.is-large-folder(item) ? root.large-icon-size : root.icon-size;
                     label-height: root.label-height;
                     app: item.app;
                     is-folder: item.is-folder;
@@ -410,9 +445,16 @@ component HomeGrid inherits HomeLayoutBase {
                     on-home: true;
                     home-enabled: true;
                     draggable: true;
+                    resizable-folder: true;
+                    large-folder: root.is-large-folder(item);
                     content-hidden: root.is-dragged(item);
                     open-folder => { root.open-folder(item.folder); }
-                    drag-started(x, y) => { root.start-drag(item, x, y); }
+                    drag-started(x, y) => {
+                        // The entry is on the current page.
+                        root.grab-x = x - root.pages-x - item.col * root.cell-width;
+                        root.grab-y = y - root.pages-y - item.row * (root.cell-height + root.row-gap);
+                        root.start-drag(item, x, y);
+                    }
                     drag-confirmed => { root.drag-confirmed = true; }
                     drag-cancelled => { root.dragging = false; }
                     drag-moved(x, y) => {
@@ -483,6 +525,16 @@ component HomeGrid inherits HomeLayoutBase {
         width: Math.max(0, root.area-width(root.span-cols) - 2 * GridMetrics.cell-padding);
         height: Math.max(0, root.area-height(root.span-rows) - 2 * GridMetrics.cell-padding);
         source: root.drag-item.picture.source;
+    }
+
+    // The large folder being dragged, under the finger (by the point it was
+    // grabbed); the other entries are drawn by `HomePage`.
+    if root.dragging && root.drag-large-folder: FolderIcon {
+        x: root.drag-x - root.grab-x - root.absolute-position.x + root.large-icon-x;
+        y: root.drag-y - root.grab-y - root.absolute-position.y + root.large-icon-y;
+        width: root.large-icon-size;
+        height: root.large-icon-size;
+        apps: root.drag-item.folder.apps;
     }
 
     // Resize mode: the picture's outline with handles on its right side, bottom
@@ -849,8 +901,9 @@ export component HomePage inherits Rectangle {
     }
 
     // The entry being dragged, under the finger: only its icon (the text list
-    // has no icons, so there it's its title). Pictures are drawn by `HomeGrid`.
-    if root.dragging && !root.drag-item.is-picture: Rectangle {
+    // has no icons, so there it's its title). Pictures and large folders of the
+    // grid are drawn by `HomeGrid`.
+    if root.dragging && !root.drag-item.is-picture && !(root.grid && root.drag-item.is-folder && root.drag-item.folder.large && !root.drag-item.dock): Rectangle {
         width: Math.max(96px, AppsLayout.item-size);
         height: Math.max(96px, AppsLayout.item-size);
         x: root.drag-x - root.absolute-position.x - self.width / 2;
