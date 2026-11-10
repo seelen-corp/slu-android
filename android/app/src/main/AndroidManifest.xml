@@ -48,7 +48,8 @@
           Wallpaper theme: the system draws the wallpaper behind the window, and
           HomeActivity makes its surface translucent so it shows through the
           (transparent) Slint UI. singleTask: pressing Home while the launcher is
-          in front delivers onNewIntent instead of a new instance.
+          in front delivers onNewIntent instead of a new instance. Always
+          portrait: in landscape Home keeps the same layout and sizes, rotated.
         -->
         <activity
             android:name=".HomeActivity"
@@ -59,6 +60,7 @@
             android:stateNotNeeded="true"
             android:clearTaskOnLaunch="true"
             android:windowSoftInputMode="adjustNothing"
+            android:screenOrientation="portrait"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode">
 
             <meta-data

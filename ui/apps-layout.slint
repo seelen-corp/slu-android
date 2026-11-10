@@ -1,0 +1,13 @@
+// Settings > Apps: size of the app items and padding around them, on Home and in
+// the Apps Menu. Set from Rust with the saved config. The spacing between items
+// is not a setting: it's the space left over, spread evenly.
+export global AppsLayout {
+    // Item size of the current view: icon size in the grid (the label takes its
+    // own space below), or height of a list row (the icon adapts to it).
+    in property <length> item-size: 48px;
+    // Lines of the app titles (1 or 2), in every view. Always reserved: a short
+    // title takes the same space as a long one (no layout shifts).
+    in property <int> label-lines: 1;
+    // Space around the apps (between them and the edges of their area).
+    in property <length> padding: 8px;
+}

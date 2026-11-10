@@ -41,3 +41,31 @@ export enum AppsView {
     // Icons with the title below.
     grid,
 }
+
+// Settings > Icon shape (`config::IconShape`).
+export enum IconShape {
+    // The device's own icon mask.
+    system,
+    circle,
+    squircle,
+    teardrop,
+    // Corners set by Settings > Corner radius.
+    rounded-square,
+}
+
+// Settings > Old-style icons (`config::LegacyIcons`): icons that are a single
+// image, not adaptive.
+export enum LegacyIcons {
+    // Wrapped in the icon shape.
+    wrap,
+    // Drawn as they are.
+    original,
+}
+
+// Settings > Swipe down on Home.
+export enum SwipeDownAction {
+    // The Apps Menu with its search focused.
+    search,
+    // The system notifications panel.
+    notifications,
+}

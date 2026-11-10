@@ -12,6 +12,8 @@ import { WallpaperLabel } from "../components/wallpaper-label.slint";
 export component AppsMenuPage inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
+    // Grid view.
+    in property <int> columns: 4;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
     // Home screen enabled (Settings > Launcher screens): apps can be placed on it,
@@ -27,6 +29,21 @@ export component AppsMenuPage inherits Rectangle {
 
     // Closing distance of the swipe down; shorter swipes are ignored.
     private property <length> close-distance: 48px;
+
+    // Filters the apps (in Rust) with what's typed, including the word the
+    // keyboard is still composing.
+    function apply-search() {
+        debounce.stop();
+        LauncherActions.search(search.current-text);
+        collection.scroll-to-top();
+    }
+
+    // Debounce of the search while typing: restarted on every keystroke.
+    debounce := Timer {
+        interval: 200ms;
+        running: false;
+        triggered => { root.apply-search(); }
+    }
 
     SwipeGestureHandler {
         // Only at the top: anywhere else a downward drag scrolls the apps.
@@ -51,12 +68,11 @@ export component AppsMenuPage inherits Rectangle {
 
                 search := TextField {
                     placeholder: I18n.t("apps_menu.search");
-                    edited(text) => {
-                        LauncherActions.search(text);
-                        collection.scroll-to-top();
-                    }
-                    // Enter opens the first result.
+                    // Searches as you type, once typing pauses (`debounce`).
+                    text-changed => { debounce.restart(); }
+                    // Enter searches right away and opens the first result.
                     accepted => {
+                        root.apply-search();
                         if root.apps.length > 0 {
                             AppActions.launch(root.apps[0]);
                         }
@@ -84,6 +100,7 @@ export component AppsMenuPage inherits Rectangle {
             collection := AppCollection {
                 apps: root.apps;
                 view: root.view;
+                columns: root.columns;
                 home-enabled: root.home-enabled;
             }
         }

@@ -1,14 +1,17 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { AppItem, AppsView } from "../types.slint";
+import { AppsLayout } from "../apps-layout.slint";
 import { AppListItem } from "app-list-item.slint";
 import { AppGrid } from "app-grid.slint";
 
 // The Apps Menu's apps, in the view chosen in Settings (list, text list or grid),
-// scrollable.
+// scrollable, with the item size and padding of `AppsLayout`.
 export component AppCollection inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
     in property <bool> home-enabled: false;
+    // Grid view.
+    in property <int> columns: 4;
     // Scrolled to the very top (a swipe down there is free for the parent).
     out property <bool> at-top: self.scroll-y >= 0;
 
@@ -29,10 +32,19 @@ export component AppCollection inherits Rectangle {
         mouse-drag-pan-enabled: true;
         viewport-y <=> root.scroll-y;
 
-        for app in root.apps: AppListItem {
-            app: app;
-            show-icon: root.view == AppsView.list;
-            home-enabled: root.home-enabled;
+        // Padding of `AppsLayout` around the rows (keeps the ListView's lazy
+        // rows): the first row adds the top padding, the last the bottom one.
+        for app[index] in root.apps: VerticalLayout {
+            padding-left: AppsLayout.padding;
+            padding-right: AppsLayout.padding;
+            padding-top: index == 0 ? AppsLayout.padding : 0;
+            padding-bottom: index == root.apps.length - 1 ? AppsLayout.padding : 0;
+
+            AppListItem {
+                app: app;
+                show-icon: root.view == AppsView.list;
+                home-enabled: root.home-enabled;
+            }
         }
     }
 
@@ -47,6 +59,7 @@ export component AppCollection inherits Rectangle {
             width: scroll.visible-width;
             apps: root.apps;
             home-enabled: root.home-enabled;
+            columns: root.columns;
         }
     }
 }

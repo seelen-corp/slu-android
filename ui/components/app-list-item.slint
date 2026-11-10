@@ -1,36 +1,75 @@
 import { Tokens } from "../tokens.slint";
+import { AppsLayout } from "../apps-layout.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
 
-// Row of the list views: icon + title (list) or title only (text list). Drawn
-// over the wallpaper.
+export global ListMetrics {
+    out property <relative-font-size> label-font-size: 1.125rem;
+    // Padding between a row's pressed overlay and its icon/label.
+    out property <length> row-padding: Tokens.spacing-xs;
+
+    // Icon side: the row size (`AppsLayout.item-size`) minus its padding. It
+    // doesn't depend on the label.
+    public pure function icon-size() -> length {
+        return Math.max(16px, AppsLayout.item-size - 2 * ListMetrics.row-padding);
+    }
+    // Row height: `AppsLayout.item-size`, taller only if the label lines
+    // (`AppsLayout.label-lines`, always reserved) don't fit.
+    public pure function row-height(line-height: length) -> length {
+        return Math.max(AppsLayout.item-size, 2 * ListMetrics.row-padding + AppsLayout.label-lines * line-height);
+    }
+}
+
+// Measures the height of one list label line.
+export component ListLabelMetrics inherits Text {
+    text: "Ag";
+    font-size: ListMetrics.label-font-size;
+    visible: false;
+    accessible-role: none;
+}
+
+// Row of the list views: icon + title (list) or title only (text list). Its
+// height is `ListMetrics.row-height`; the label always reserves its lines
+// (Settings), so the rows don't change size with the titles. The space around
+// the rows is the padding of `AppsLayout`. Drawn over the wallpaper.
 export component AppListItem inherits AppItemBase {
     in property <bool> show-icon: true;
     // Hides the visuals but keeps the touch alive (the app is being dragged).
     in property <bool> content-hidden: false;
 
+    metrics := ListLabelMetrics { }
+
+    height: ListMetrics.row-height(metrics.preferred-height);
     border-radius: Tokens.radius-s;
     background: root.pressed ? Tokens.slu-std-ui-pressed-overlay : transparent;
 
     HorizontalLayout {
-        padding-left: Tokens.spacing-m;
-        padding-right: Tokens.spacing-m;
-        padding-top: root.show-icon ? Tokens.spacing-xs : Tokens.spacing-s;
-        padding-bottom: root.show-icon ? Tokens.spacing-xs : Tokens.spacing-s;
+        padding: ListMetrics.row-padding;
         spacing: Tokens.spacing-s;
+        alignment: stretch;
 
-        // Same size Rust renders the icons at (`ICON_SIZE` in lib.rs).
-        if root.show-icon: Image {
-            source: root.app.icon;
-            width: 48px;
-            height: 48px;
-            visible: !root.content-hidden;
+        if root.show-icon: VerticalLayout {
+            alignment: center;
+
+            Image {
+                source: root.app.icon;
+                width: ListMetrics.icon-size();
+                height: ListMetrics.icon-size();
+                visible: !root.content-hidden;
+            }
         }
 
-        WallpaperLabel {
-            text: root.app.title;
-            font-size: 1.125rem;
-            visible: !root.content-hidden;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+
+            WallpaperLabel {
+                height: AppsLayout.label-lines * metrics.preferred-height;
+                text: root.app.title;
+                font-size: ListMetrics.label-font-size;
+                wrap: AppsLayout.label-lines > 1 ? TextWrap.word-wrap : TextWrap.no-wrap;
+                visible: !root.content-hidden;
+            }
         }
     }
 }

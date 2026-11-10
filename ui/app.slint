@@ -2,24 +2,25 @@ import { HomePage } from "pages/home.slint";
 import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, HomeItem, LauncherScreens, AppsView } from "types.slint";
+import { AppItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "types.slint";
 import { LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
-export { AppItem, HomeItem, LauncherScreens, AppsView }
+export { AppsLayout } from "apps-layout.slint";
+export { AppItem, HomeItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
+    in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
     // Launchable apps shown in the Apps Menu (filtered by its search).
     in property <[AppItem]> apps: [];
     // Home, grid view: apps in the pages and in the dock.
     in property <[HomeItem]> home-items: [];
     in property <[HomeItem]> dock-items: [];
     in property <int> home-columns: 4;
-    in property <int> home-rows: 5;
     in property <int> home-pages: 1;
     // Home, list views: every Home app, in order.
     in property <[AppItem]> home-list: [];
@@ -82,10 +83,10 @@ export component MainWindow inherits Window {
             items: root.home-items;
             dock-items: root.dock-items;
             columns: root.home-columns;
-            rows: root.home-rows;
             pages: root.home-pages;
             list-items: root.home-list;
             view: root.apps-view;
+            swipe-down-action: root.swipe-down-action;
             top-inset: root.safe-area-insets.top;
             bottom-inset: root.safe-area-insets.bottom;
             left-inset: root.safe-area-insets.left;
@@ -96,6 +97,7 @@ export component MainWindow inherits Window {
         if !root.home-enabled || root.apps-menu-open: menu := AppsMenuPage {
             apps: root.apps;
             view: root.apps-view;
+            columns: root.home-columns;
             home-enabled: root.home-enabled;
             top-inset: root.safe-area-insets.top;
             bottom-inset: root.safe-area-insets.bottom;
@@ -112,12 +114,26 @@ export component MainWindow inherits Window {
 export component SettingsWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
+    in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
+    in property <IconShape> icon-shape: IconShape.system;
+    in property <int> icon-corner-radius: 25;
+    in property <LegacyIcons> legacy-icons: LegacyIcons.wrap;
     in property <int> home-columns: 4;
-    in property <int> home-rows: 5;
+    // Item size of the current view.
+    in property <int> item-size: 80;
+    in property <int> apps-padding: 8;
+    in property <int> label-lines: 1;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
-    callback home-grid-changed(columns: int, rows: int);
+    callback swipe-down-action-changed(value: SwipeDownAction);
+    callback icon-shape-changed(value: IconShape);
+    callback icon-corner-radius-changed(value: int);
+    callback legacy-icons-changed(value: LegacyIcons);
+    callback grid-columns-changed(columns: int);
+    callback item-size-changed(value: int);
+    callback apps-padding-changed(value: int);
+    callback label-lines-changed(value: int);
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
 
@@ -128,11 +144,24 @@ export component SettingsWindow inherits Window {
         bottom-inset: root.safe-area-insets.bottom;
         launcher-screens: root.launcher-screens;
         apps-view: root.apps-view;
+        swipe-down-action: root.swipe-down-action;
+        icon-shape: root.icon-shape;
+        icon-corner-radius: root.icon-corner-radius;
+        legacy-icons: root.legacy-icons;
         home-columns: root.home-columns;
-        home-rows: root.home-rows;
+        item-size: root.item-size;
+        apps-padding: root.apps-padding;
+        label-lines: root.label-lines;
         launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
         apps-view-changed(value) => { root.apps-view-changed(value); }
-        home-grid-changed(columns, rows) => { root.home-grid-changed(columns, rows); }
+        swipe-down-action-changed(value) => { root.swipe-down-action-changed(value); }
+        icon-shape-changed(value) => { root.icon-shape-changed(value); }
+        icon-corner-radius-changed(value) => { root.icon-corner-radius-changed(value); }
+        legacy-icons-changed(value) => { root.legacy-icons-changed(value); }
+        grid-columns-changed(columns) => { root.grid-columns-changed(columns); }
+        item-size-changed(value) => { root.item-size-changed(value); }
+        apps-padding-changed(value) => { root.apps-padding-changed(value); }
+        label-lines-changed(value) => { root.label-lines-changed(value); }
         open-wallpaper-picker => { root.open-wallpaper-picker(); }
         open-default-launcher-settings => { root.open-default-launcher-settings(); }
     }

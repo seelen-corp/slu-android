@@ -1,0 +1,73 @@
+import { Tokens } from "../tokens.slint";
+
+// Standard slider (`input[type="range"][data-skin="flat"]`): a flat track filled
+// with the accent up to the value, no thumb. Tap or drag anywhere on it to set
+// the value. The touch area is taller than the track (touch target).
+export component Slider inherits Rectangle {
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <int> value: 0;
+    in property <bool> enabled: true;
+
+    // The value under the finger, while it's down (to show it live).
+    out property <int> current-value: touch.pressed ? root.dragged-value : root.value;
+
+    // The finger was lifted: the value to save.
+    callback changed(value: int);
+
+    private property <int> dragged-value: root.value;
+
+    function value-at(x: length) -> int {
+        let ratio = clamp(x / Math.max(1px, root.width), 0, 1);
+        return clamp(round(ratio * (root.maximum - root.minimum)) + root.minimum, root.minimum, root.maximum);
+    }
+
+    min-height: 44px;
+    min-width: 120px;
+    horizontal-stretch: 1;
+    opacity: root.enabled ? 1 : 0.5;
+
+    accessible-role: slider;
+    accessible-value: root.current-value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: 1;
+    accessible-action-increment => { root.changed(Math.min(root.maximum, root.value + 1)); }
+    accessible-action-decrement => { root.changed(Math.max(root.minimum, root.value - 1)); }
+
+    track := Rectangle {
+        y: (root.height - self.height) / 2;
+        height: 1.5rem;
+        border-radius: Tokens.radius-s;
+        background: Tokens.slu-std-ui-hover-overlay;
+        clip: true;
+
+        Rectangle {
+            x: 0;
+            width: root.maximum > root.minimum ? parent.width * (root.current-value - root.minimum) / (root.maximum - root.minimum) : 0;
+            background: Tokens.slu-std-ui-color;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+
+        pointer-event(event) => {
+            if event.button != PointerEventButton.left {
+                return;
+            }
+            if event.kind == PointerEventKind.down {
+                root.dragged-value = root.value-at(self.mouse-x);
+            } else if event.kind == PointerEventKind.up {
+                // Not on `cancel`: the page took the touch over (vertical scroll).
+                if root.dragged-value != root.value {
+                    root.changed(root.dragged-value);
+                }
+            }
+        }
+
+        moved => {
+            root.dragged-value = root.value-at(self.mouse-x);
+        }
+    }
+}

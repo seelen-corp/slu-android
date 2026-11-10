@@ -7,8 +7,16 @@ export component TextField inherits Rectangle {
     in property <string> placeholder;
     in property <InputType> input-type: InputType.text;
     out property <bool> has-focus: input.has-focus;
+    // What the user sees typed: `text` plus the word the keyboard is still
+    // composing (Android IMEs keep it in `preedit-text`, outside `text`, until
+    // it's committed). The composing word is at the cursor; this assumes it's at
+    // the end, which is where it is while typing.
+    out property <string> current-text: input.text + input.preedit-text;
 
+    // `text` changed (committed edits only).
     callback edited(text: string);
+    // `current-text` changed: every keystroke, including the composing word.
+    callback text-changed(text: string);
     // Enter pressed.
     callback accepted(text: string);
 
@@ -19,6 +27,8 @@ export component TextField inherits Rectangle {
     public function unfocus-text() {
         input.clear-focus();
     }
+
+    changed current-text => { root.text-changed(root.current-text); }
 
     min-height: 44px;
     horizontal-stretch: 1;
@@ -46,7 +56,8 @@ export component TextField inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 text: root.placeholder;
-                visible: input.text == "";
+                // Hidden while a word is being composed too (it's drawn by the input).
+                visible: root.current-text == "";
                 font-size: 1rem;
                 color: Tokens.slu-std-fg-muted-color;
                 vertical-alignment: center;

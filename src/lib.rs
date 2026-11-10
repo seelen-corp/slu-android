@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use error::Result;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use system_modules::config::{AppRef, Slot};
-use system_modules::{activity, android_ctx, apps, config, locale, system, theme};
+use system_modules::{activity, android_ctx, apps, config, icons, locale, system, theme};
 
 slint::include_modules!();
 
@@ -75,21 +75,91 @@ impl From<AppsView> for config::AppsView {
     }
 }
 
+impl From<config::IconShape> for IconShape {
+    fn from(value: config::IconShape) -> Self {
+        match value {
+            config::IconShape::System => Self::System,
+            config::IconShape::Circle => Self::Circle,
+            config::IconShape::Squircle => Self::Squircle,
+            config::IconShape::Teardrop => Self::Teardrop,
+            config::IconShape::RoundedSquare => Self::RoundedSquare,
+        }
+    }
+}
+
+impl From<IconShape> for config::IconShape {
+    fn from(value: IconShape) -> Self {
+        match value {
+            IconShape::System => Self::System,
+            IconShape::Circle => Self::Circle,
+            IconShape::Squircle => Self::Squircle,
+            IconShape::Teardrop => Self::Teardrop,
+            IconShape::RoundedSquare => Self::RoundedSquare,
+        }
+    }
+}
+
+impl From<config::LegacyIcons> for LegacyIcons {
+    fn from(value: config::LegacyIcons) -> Self {
+        match value {
+            config::LegacyIcons::Wrap => Self::Wrap,
+            config::LegacyIcons::Original => Self::Original,
+        }
+    }
+}
+
+impl From<LegacyIcons> for config::LegacyIcons {
+    fn from(value: LegacyIcons) -> Self {
+        match value {
+            LegacyIcons::Wrap => Self::Wrap,
+            LegacyIcons::Original => Self::Original,
+        }
+    }
+}
+
+impl From<config::SwipeDownAction> for SwipeDownAction {
+    fn from(value: config::SwipeDownAction) -> Self {
+        match value {
+            config::SwipeDownAction::Search => Self::Search,
+            config::SwipeDownAction::Notifications => Self::Notifications,
+        }
+    }
+}
+
+impl From<SwipeDownAction> for config::SwipeDownAction {
+    fn from(value: SwipeDownAction) -> Self {
+        match value {
+            SwipeDownAction::Search => Self::Search,
+            SwipeDownAction::Notifications => Self::Notifications,
+        }
+    }
+}
+
 impl AppItem {
     fn app_ref(&self) -> AppRef {
         AppRef::new(&self.package_name, &self.activity_name)
     }
 }
 
-/// Logical size (px) app icons are shown at, in the list and grid views
-/// (`GridMetrics.icon-size` in `ui/components/app-grid.slint`).
-const ICON_SIZE: f32 = 48.0;
+/// Largest logical size (px) app icons are shown at in the current view, so
+/// they're only ever scaled down. `None` in the text list (no icons). In the
+/// grid the item size is the icon size (`GridMetrics.icon-size`, only smaller
+/// if the column is too narrow); in the list, the row minus its padding
+/// (`AppListItem`).
+fn icon_size(config: &config::Config) -> Option<f32> {
+    let item = config.item_size(config.apps_view) as f32;
+    match config.apps_view {
+        config::AppsView::Grid => Some(item),
+        config::AppsView::List => Some(item - 2.0 * 8.0),
+        config::AppsView::TextList => None,
+    }
+}
 
 thread_local! {
-    /// Rendered app icons by (package, activity, size). Lives on the UI thread
-    /// (`slint::Image` is not `Send`); cleared when packages change, since an
-    /// update can change the icon.
-    static ICONS: RefCell<HashMap<(String, String, u32), slint::Image>> = Default::default();
+    /// Rendered app icons by (package, activity, size, shape). Lives on the UI
+    /// thread (`slint::Image` is not `Send`); cleared when packages change, since
+    /// an update can change the icon.
+    static ICONS: RefCell<HashMap<IconKey, slint::Image>> = Default::default();
     /// Every launchable app, before the Apps Menu search.
     static ALL_APPS: RefCell<Vec<AppItem>> = const { RefCell::new(Vec::new()) };
     /// Current Apps Menu search.
@@ -98,14 +168,21 @@ thread_local! {
     static MAIN_WINDOW: RefCell<Option<slint::Weak<MainWindow>>> = const { RefCell::new(None) };
 }
 
-fn app_icon(app: &apps::AppInfo, size: u32) -> slint::Image {
+type IconKey = (String, String, u32, config::IconStyle);
+
+fn app_icon(app: &apps::AppInfo, size: u32, style: config::IconStyle) -> slint::Image {
     // The size is part of the key: the scale factor is only known once the
     // window is shown, so the first refresh may render at another size.
-    let key = (app.package_name.clone(), app.activity_name.clone(), size);
+    let key = (
+        app.package_name.clone(),
+        app.activity_name.clone(),
+        size,
+        style,
+    );
     if let Some(icon) = ICONS.with_borrow(|icons| icons.get(&key).cloned()) {
         return icon;
     }
-    match apps::load_icon(&app.package_name, &app.activity_name, size) {
+    match icons::load_icon(&app.package_name, &app.activity_name, size, style) {
         Ok(buffer) => {
             let icon = slint::Image::from_rgba8(buffer);
             ICONS.with_borrow_mut(|icons| icons.insert(key, icon.clone()));
@@ -213,13 +290,18 @@ fn refresh(window: &MainWindow) -> Result<()> {
     apply_wallpaper(window.global::<Tokens>());
 
     // The text list shows no icons: don't render them.
-    let icon_size = (config.apps_view != config::AppsView::TextList)
-        .then(|| (ICON_SIZE * window.window().scale_factor()).round() as u32);
+    let icon_size = icon_size(&config)
+        .map(|size| (size * window.window().scale_factor()).round().max(1.0) as u32);
+    // Icons rendered at another size or style (changed in Settings) are not used
+    // anymore.
+    let style = config.icon_style();
+    ICONS
+        .with_borrow_mut(|icons| icons.retain(|key, _| Some(key.2) == icon_size && key.3 == style));
 
     let items: Vec<AppItem> = apps::get_installed_apps()?
         .into_iter()
         .map(|app| AppItem {
-            icon: icon_size.map_or_else(slint::Image::default, |size| app_icon(&app, size)),
+            icon: icon_size.map_or_else(slint::Image::default, |size| app_icon(&app, size, style)),
             pinned: config.is_on_home(&AppRef::new(&app.package_name, &app.activity_name)),
             title: app.title.into(),
             package_name: app.package_name.into(),
@@ -275,12 +357,16 @@ fn refresh(window: &MainWindow) -> Result<()> {
 
     window.set_launcher_screens(config.launcher_screens.into());
     window.set_apps_view(config.apps_view.into());
+    window.set_swipe_down_action(config.swipe_down.into());
     window.set_home_columns(config.home_columns as i32);
-    window.set_home_rows(config.home_rows as i32);
     window.set_home_pages(config.home_pages() as i32);
     window.set_home_items(ModelRc::new(VecModel::from(home_items)));
     window.set_dock_items(ModelRc::new(VecModel::from(dock_items)));
     window.set_home_list(ModelRc::new(VecModel::from(home_list)));
+    let layout = window.global::<AppsLayout>();
+    layout.set_item_size(config.item_size(config.apps_view) as f32);
+    layout.set_padding(config.apps_padding as f32);
+    layout.set_label_lines(config.label_lines as i32);
 
     ALL_APPS.with_borrow_mut(|apps| *apps = items);
     apply_search(window);
@@ -298,51 +384,111 @@ fn edit_home(
     log_error(action, result);
 }
 
+/// Shows a config in the Settings window.
+fn show_settings(window: &SettingsWindow, config: &config::Config) {
+    window.set_launcher_screens(config.launcher_screens.into());
+    window.set_apps_view(config.apps_view.into());
+    window.set_swipe_down_action(config.swipe_down.into());
+    window.set_icon_shape(config.icon_shape.into());
+    window.set_icon_corner_radius(config.icon_corner_radius as i32);
+    window.set_legacy_icons(config.legacy_icons.into());
+    window.set_home_columns(config.home_columns as i32);
+    window.set_item_size(config.item_size(config.apps_view) as i32);
+    window.set_apps_padding(config.apps_padding as i32);
+    window.set_label_lines(config.label_lines as i32);
+}
+
+/// Settings change: saves it and shows the saved config.
+fn save_setting(
+    weak: &slint::Weak<SettingsWindow>,
+    action: &str,
+    change: impl FnOnce(&mut config::Config),
+) {
+    let result = config::update(change);
+    if let (Ok(config), Some(window)) = (&result, weak.upgrade()) {
+        show_settings(&window, config);
+    }
+    log_error(action, result.map(|_| ()));
+}
+
 fn run_settings(locale: &str) -> Result<()> {
     let window = SettingsWindow::new()?;
     setup_i18n(window.global::<I18n>(), locale);
     apply_accent(window.global::<Tokens>());
-
-    let config = config::load()?;
-    window.set_launcher_screens(config.launcher_screens.into());
-    window.set_apps_view(config.apps_view.into());
-    window.set_home_columns(config.home_columns as i32);
-    window.set_home_rows(config.home_rows as i32);
+    show_settings(&window, &config::load()?);
 
     let weak = window.as_weak();
     window.on_launcher_screens_changed(move |value| {
-        let result = config::update(|config| config.launcher_screens = value.into());
-        if let (Ok(config), Some(window)) = (&result, weak.upgrade()) {
-            window.set_launcher_screens(config.launcher_screens.into());
-        }
-        log_error("save launcher screens", result.map(|_| ()));
+        save_setting(&weak, "save launcher screens", |config| {
+            config.launcher_screens = value.into()
+        });
     });
     let weak = window.as_weak();
     window.on_apps_view_changed(move |value| {
-        let result = config::update(|config| config.apps_view = value.into());
-        if let (Ok(config), Some(window)) = (&result, weak.upgrade()) {
-            window.set_apps_view(config.apps_view.into());
-        }
-        log_error("save apps view", result.map(|_| ()));
+        save_setting(&weak, "save apps view", |config| {
+            config.apps_view = value.into()
+        });
     });
     let weak = window.as_weak();
-    window.on_home_grid_changed(move |columns, rows| {
-        let result = config::update(|config| {
+    window.on_swipe_down_action_changed(move |value| {
+        save_setting(&weak, "save swipe down action", |config| {
+            config.swipe_down = value.into()
+        });
+    });
+    let weak = window.as_weak();
+    window.on_icon_shape_changed(move |value| {
+        save_setting(&weak, "save icon shape", |config| {
+            config.icon_shape = value.into()
+        });
+    });
+    let weak = window.as_weak();
+    window.on_icon_corner_radius_changed(move |value| {
+        save_setting(&weak, "save icon corner radius", |config| {
+            config.icon_corner_radius = to_index(value).clamp(
+                *config::ICON_CORNER_RADIUS_RANGE.start(),
+                *config::ICON_CORNER_RADIUS_RANGE.end(),
+            )
+        });
+    });
+    let weak = window.as_weak();
+    window.on_legacy_icons_changed(move |value| {
+        save_setting(&weak, "save legacy icons", |config| {
+            config.legacy_icons = value.into()
+        });
+    });
+    let weak = window.as_weak();
+    window.on_grid_columns_changed(move |columns| {
+        save_setting(&weak, "save grid columns", |config| {
             config.home_columns = to_index(columns).clamp(
                 *config::HOME_COLUMNS_RANGE.start(),
                 *config::HOME_COLUMNS_RANGE.end(),
             );
-            config.home_rows = to_index(rows).clamp(
-                *config::HOME_ROWS_RANGE.start(),
-                *config::HOME_ROWS_RANGE.end(),
-            );
             config.normalize();
         });
-        if let (Ok(config), Some(window)) = (&result, weak.upgrade()) {
-            window.set_home_columns(config.home_columns as i32);
-            window.set_home_rows(config.home_rows as i32);
-        }
-        log_error("save home grid", result.map(|_| ()));
+    });
+    let weak = window.as_weak();
+    window.on_item_size_changed(move |value| {
+        save_setting(&weak, "save item size", |config| {
+            config.set_item_size(config.apps_view, to_index(value))
+        });
+    });
+    let weak = window.as_weak();
+    window.on_apps_padding_changed(move |value| {
+        save_setting(&weak, "save apps padding", |config| {
+            config.apps_padding = to_index(value).clamp(
+                *config::APPS_PADDING_RANGE.start(),
+                *config::APPS_PADDING_RANGE.end(),
+            )
+        });
+    });
+    let weak = window.as_weak();
+    window.on_label_lines_changed(move |value| {
+        save_setting(&weak, "save label lines", |config| {
+            config.label_lines = to_index(value).clamp(
+                *config::LABEL_LINES_RANGE.start(),
+                *config::LABEL_LINES_RANGE.end(),
+            )
+        });
     });
     window.on_open_wallpaper_picker(|| {
         log_error("open wallpaper picker", system::open_wallpaper_picker())
@@ -424,6 +570,22 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
     home.on_move_to_index(move |app, index| {
         edit_home(&weak, "reorder home", |config| {
             config.move_to_index(&app.app_ref(), to_index(index) as usize, is_installed)
+        });
+    });
+    let weak = window.as_weak();
+    home.on_rows_fit(move |rows| {
+        let rows = to_index(rows).clamp(
+            *config::HOME_ROWS_RANGE.start(),
+            *config::HOME_ROWS_RANGE.end(),
+        );
+        // Also reported when the layout settles at the same size: only save changes.
+        if config::load().is_ok_and(|config| config.home_rows == rows) {
+            return;
+        }
+        // Apps in rows that no longer fit move to the first free cells.
+        edit_home(&weak, "save home rows", |config| {
+            config.home_rows = rows;
+            config.normalize();
         });
     });
 

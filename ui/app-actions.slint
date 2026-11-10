@@ -18,6 +18,9 @@ export global HomeActions {
     // List views: moves an app to another position of the list (the other apps
     // shift, keeping the cells the layout uses).
     callback move-to-index(app: AppItem, index: int);
+    // Grid view, portrait: the number of rows that fit on screen changed (the
+    // item size or the screen). Rust saves it and moves apps that no longer fit.
+    callback rows-fit(rows: int);
 }
 
 // Launcher/system actions, implemented in Rust.

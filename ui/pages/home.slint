@@ -1,13 +1,13 @@
 import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { AppActions, HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
-import { AppItem, AppsView, HomeItem } from "../types.slint";
-import { AppGridItem, GridMetrics } from "../components/app-grid.slint";
-import { AppListItem } from "../components/app-list-item.slint";
+import { HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
+import { AppItem, AppsView, HomeItem, SwipeDownAction } from "../types.slint";
+import { AppsLayout } from "../apps-layout.slint";
+import { AppGridItem, GridLabelMetrics, GridMetrics } from "../components/app-grid.slint";
+import { AppListItem, ListLabelMetrics, ListMetrics } from "../components/app-list-item.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { MenuSurface, MenuItem } from "../components/menu.slint";
-import { TextField } from "../components/text-field.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
 
 // Long press on an empty part of Home (opens the Home menu).
@@ -41,50 +41,7 @@ component EmptySpaceTouch inherits TouchArea {
     }
 }
 
-// Search field on Home: looks like the standard text field; tapping it opens
-// the Apps Menu with its search focused.
-component HomeSearchBar inherits Rectangle {
-    callback activated();
 
-    min-height: field.min-height;
-
-    field := TextField {
-        width: 100%;
-        height: 100%;
-        placeholder: I18n.t("apps_menu.search");
-    }
-
-    // Over the field: it never gets the focus here (no keyboard on Home).
-    TouchArea {
-        clicked => { root.activated(); }
-    }
-}
-
-// Drop target shown while dragging an app (e.g. "Remove"). Raised surface; the
-// accent fill tells that the app is over it ("single highlighted item").
-component DropTarget inherits Rectangle {
-    in property <string> text;
-    in property <bool> active: false;
-
-    min-height: 44px;
-    horizontal-stretch: 1;
-    border-radius: Tokens.radius-s;
-    background: root.active ? Tokens.slu-std-ui-color : Tokens.slu-std-bg-light-color;
-    drop-shadow-offset-x: Tokens.shadow-s-offset;
-    drop-shadow-offset-y: Tokens.shadow-s-offset;
-    drop-shadow-blur: Tokens.shadow-s-blur;
-    drop-shadow-color: Tokens.shadow-s-color;
-
-    Text {
-        text: root.text;
-        font-size: 1rem;
-        font-weight: 500;
-        color: root.active ? Tokens.slu-std-ui-fg-color : Tokens.slu-std-fg-color;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-}
 
 // Highlight of the cell/row an app would be dropped on (drop target outline).
 component DropHighlight inherits Rectangle {
@@ -120,10 +77,6 @@ component HomeLayoutBase inherits Rectangle {
     in-out property <AppItem> drag-app;
     in-out property <length> drag-x;
     in-out property <length> drag-y;
-    // The dragged app is over the top bar's drop targets.
-    in property <bool> over-remove: false;
-    in property <bool> over-uninstall: false;
-    in property <bool> over-top-bar: false;
 
     callback empty-long-pressed(x: length, y: length);
 
@@ -138,18 +91,6 @@ component HomeLayoutBase inherits Rectangle {
         root.dragging = true;
     }
 
-    // Handles the top bar's drop targets; true if the drop was handled.
-    protected function drop-on-top-bar() -> bool {
-        if root.over-remove {
-            AppActions.remove-from-home(root.drag-app);
-            return true;
-        }
-        if root.over-uninstall {
-            AppActions.uninstall(root.drag-app);
-            return true;
-        }
-        return root.over-top-bar;
-    }
 }
 
 // Grid view: pages of cells (swiped horizontally) and the dock below them.
@@ -157,23 +98,49 @@ component HomeGrid inherits HomeLayoutBase {
     in property <[HomeItem]> items: [];
     in property <[HomeItem]> dock-items: [];
     in property <int> columns: 4;
-    in property <int> rows: 5;
     in property <int> page-count: 1;
     in-out property <int> current-page: 0;
     // Horizontal offset of the pages while the finger swipes them.
     in property <length> swipe-offset: 0;
     in property <bool> swiping: false;
 
-    property <length> cell-width: pages-area.width / root.columns;
-    property <length> cell-height: pages-area.height / root.rows;
-    property <length> dock-cell-width: dock-area.width / root.columns;
-    property <length> pages-x: pages-area.absolute-position.x;
-    property <length> pages-y: pages-area.absolute-position.y;
+    // The rows that fit changed; Rust saves them and moves the apps that no
+    // longer fit. Home is always portrait (manifest), so rotating doesn't change them.
+    callback rows-fit(rows: int);
+
+    // Cells a column wide and as tall as the icon (`AppsLayout.item-size`) plus
+    // its label; as many rows as fit, the space left spread between them. The
+    // dock uses the same columns and icon size, without labels.
+    property <length> edge: AppsLayout.padding;
+    property <length> inner-width: Math.max(0, root.width - 2 * root.edge);
+    property <length> inner-height: Math.max(0, pages-area.height - 2 * root.edge);
+    property <length> cell-width: GridMetrics.column-width(root.inner-width, root.columns);
+    property <length> icon-size: GridMetrics.icon-size(root.cell-width);
+    property <length> label-height: AppsLayout.label-lines * label-metrics.preferred-height;
+    property <length> cell-height: GridMetrics.cell-height(root.icon-size, true, root.label-height);
+    property <length> dock-cell-height: GridMetrics.cell-height(root.icon-size, false, 0);
+    property <int> row-count: Math.max(1, Math.floor(root.inner-height / Math.max(1px, root.cell-height)));
+    property <length> row-gap: root.row-count > 1 ? Math.max(0, (root.inner-height - root.row-count * root.cell-height) / (root.row-count - 1)) : 0;
+    // Origin of the first cell, in window coordinates.
+    property <length> pages-x: pages-area.absolute-position.x + root.edge;
+    property <length> pages-y: pages-area.absolute-position.y + root.edge;
     property <bool> over-dock: root.dragging && root.drag-y >= dock-area.absolute-position.y;
-    property <bool> over-grid: root.dragging && !root.over-top-bar && !root.over-dock;
-    property <int> target-col: clamp(floor((root.drag-x - root.pages-x) / root.cell-width), 0, root.columns - 1);
-    property <int> target-row: clamp(floor((root.drag-y - root.pages-y) / root.cell-height), 0, root.rows - 1);
-    property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x) / root.dock-cell-width), 0, root.columns - 1);
+    property <bool> over-grid: root.dragging && !root.over-dock;
+    // Cell under the finger; half of the space around a cell counts as the cell.
+    property <int> target-col: clamp(floor((root.drag-x - root.pages-x) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
+    property <int> target-row: clamp(floor((root.drag-y - root.pages-y + root.row-gap / 2) / Math.max(1px, root.cell-height + root.row-gap)), 0, root.row-count - 1);
+    property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
+
+    function report-rows() {
+        // Not before the layout has a real size.
+        if root.inner-height > 0 {
+            root.rows-fit(root.row-count);
+        }
+    }
+
+    changed row-count => { root.report-rows(); }
+    init => { root.report-rows(); }
+
     // Dragging an app to a side edge flips the page.
     property <length> edge-zone: 24px;
     property <bool> at-left-edge: root.drag-x < root.pages-x + root.edge-zone;
@@ -182,12 +149,10 @@ component HomeGrid inherits HomeLayoutBase {
     function end-drag(x: length, y: length) {
         root.drag-x = x;
         root.drag-y = y;
-        if !root.drop-on-top-bar() {
-            if root.over-dock {
-                HomeActions.move-to(root.drag-app, true, 0, root.target-slot, 0);
-            } else {
-                HomeActions.move-to(root.drag-app, false, root.current-page, root.target-col, root.target-row);
-            }
+        if root.over-dock {
+            HomeActions.move-to(root.drag-app, true, 0, root.target-slot, 0);
+        } else {
+            HomeActions.move-to(root.drag-app, false, root.current-page, root.target-col, root.target-row);
         }
         root.dragging = false;
     }
@@ -195,6 +160,8 @@ component HomeGrid inherits HomeLayoutBase {
     EmptySpaceTouch {
         long-pressed(x, y) => { root.empty-long-pressed(x, y); }
     }
+
+    label-metrics := GridLabelMetrics { }
 
     Timer {
         interval: 700ms;
@@ -225,8 +192,8 @@ component HomeGrid inherits HomeLayoutBase {
             }
 
             if root.over-grid: DropHighlight {
-                x: root.target-col * root.cell-width;
-                y: root.target-row * root.cell-height;
+                x: root.edge + root.target-col * root.cell-width;
+                y: root.edge + root.target-row * (root.cell-height + root.row-gap);
                 width: root.cell-width;
                 height: root.cell-height;
             }
@@ -242,10 +209,12 @@ component HomeGrid inherits HomeLayoutBase {
                 }
 
                 for item in root.items: AppGridItem {
-                    x: item.page * pages-area.width + item.col * root.cell-width;
-                    y: item.row * root.cell-height;
+                    x: item.page * pages-area.width + root.edge + item.col * root.cell-width;
+                    y: root.edge + item.row * (root.cell-height + root.row-gap);
                     width: root.cell-width;
                     height: root.cell-height;
+                    icon-size: root.icon-size;
+                    label-height: root.label-height;
                     app: item.app;
                     on-home: true;
                     home-enabled: true;
@@ -268,19 +237,23 @@ component HomeGrid inherits HomeLayoutBase {
             visible: root.page-count > 1;
         }
 
+        // Same columns and side padding as the pages; the bottom padding too.
         dock-area := Rectangle {
-            height: GridMetrics.icon-size + 4 * Tokens.spacing-2xs + Tokens.spacing-xs;
+            height: root.dock-cell-height + root.edge;
 
             if root.over-dock: DropHighlight {
-                x: root.target-slot * root.dock-cell-width;
-                width: root.dock-cell-width;
-                height: dock-area.height;
+                x: root.edge + root.target-slot * root.cell-width;
+                y: 0;
+                width: root.cell-width;
+                height: root.dock-cell-height;
             }
 
             for item in root.dock-items: AppGridItem {
-                x: item.col * root.dock-cell-width;
-                width: root.dock-cell-width;
-                height: dock-area.height;
+                x: root.edge + item.col * root.cell-width;
+                y: 0;
+                width: root.cell-width;
+                height: root.dock-cell-height;
+                icon-size: root.icon-size;
                 app: item.app;
                 show-label: false;
                 on-home: true;
@@ -300,24 +273,28 @@ component HomeGrid inherits HomeLayoutBase {
 
 // List views: every Home app in one scrollable list, reordered by dragging.
 // Swipe up (when the list doesn't scroll) opens the Apps Menu, swipe down (at the
-// top) the notifications.
+// top) the Swipe down action of Settings.
 component HomeList inherits HomeLayoutBase {
     in property <[AppItem]> apps: [];
     in property <bool> show-icon: true;
     in property <length> swipe-distance: 48px;
 
-    callback open-apps-menu();
+    callback open-apps-menu(focus-search: bool);
+    // Swipe down at the top (the action depends on Settings).
+    callback swiped-down();
 
-    property <length> row-height: root.show-icon ? 64px : 48px;
-    property <bool> over-list: root.dragging && !root.over-top-bar;
-    property <int> target-index: clamp(floor((root.drag-y - scroll.absolute-position.y - scroll.viewport-y) / root.row-height), 0, root.apps.length - 1);
+    // Row height (Settings: item size and label lines) and padding.
+    list-metrics := ListLabelMetrics { }
+    property <length> row-height: ListMetrics.row-height(list-metrics.preferred-height);
+    property <length> edge: AppsLayout.padding;
+    property <length> content-height: 2 * root.edge + root.apps.length * root.row-height;
+    property <bool> over-list: root.dragging;
+    property <int> target-index: clamp(floor((root.drag-y - scroll.absolute-position.y - scroll.viewport-y - root.edge) / Math.max(1px, root.row-height)), 0, root.apps.length - 1);
 
     function end-drag(x: length, y: length) {
         root.drag-x = x;
         root.drag-y = y;
-        if !root.drop-on-top-bar() {
-            HomeActions.move-to-index(root.drag-app, root.target-index);
-        }
+        HomeActions.move-to-index(root.drag-app, root.target-index);
         root.dragging = false;
     }
 
@@ -328,16 +305,16 @@ component HomeList inherits HomeLayoutBase {
         swiped => {
             let dy = self.current-position.y - self.pressed-position.y;
             if dy <= -root.swipe-distance {
-                root.open-apps-menu();
+                root.open-apps-menu(false);
             } else if dy >= root.swipe-distance {
-                LauncherActions.expand-notifications();
+                root.swiped-down();
             }
         }
 
         VerticalLayout {
             scroll := ScrollView {
                 mouse-drag-pan-enabled: true;
-                viewport-height: Math.max(root.apps.length * root.row-height, self.visible-height);
+                viewport-height: Math.max(root.content-height, self.visible-height);
 
                 EmptySpaceTouch {
                     width: scroll.visible-width;
@@ -359,14 +336,16 @@ component HomeList inherits HomeLayoutBase {
                 }
 
                 if root.over-list: DropHighlight {
-                    y: root.target-index * root.row-height;
-                    width: scroll.visible-width;
+                    x: root.edge;
+                    y: root.edge + root.target-index * root.row-height;
+                    width: Math.max(0, scroll.visible-width - 2 * root.edge);
                     height: root.row-height;
                 }
 
                 for app[index] in root.apps: AppListItem {
-                    y: index * root.row-height;
-                    width: scroll.visible-width;
+                    x: root.edge;
+                    y: root.edge + index * root.row-height;
+                    width: Math.max(0, scroll.visible-width - 2 * root.edge);
                     height: root.row-height;
                     app: app;
                     show-icon: root.show-icon;
@@ -391,7 +370,7 @@ component HomeList inherits HomeLayoutBase {
                     text: I18n.t("home.all_apps");
                     skin: ButtonSkin.transparent;
                     over-wallpaper: true;
-                    clicked => { root.open-apps-menu(); }
+                    clicked => { root.open-apps-menu(false); }
                 }
             }
         }
@@ -399,7 +378,8 @@ component HomeList inherits HomeLayoutBase {
 }
 
 // Home: the apps placed by the user, over the wallpaper. Grid view: pages + dock,
-// swipe left/right between pages, up for the Apps Menu, down for notifications.
+// swipe left/right between pages, up for the Apps Menu, down for the Settings action
+// (search or notifications).
 // List views: one list. Long press an app to move it (drag) or open its menu;
 // long press an empty space for the Home menu.
 export component HomePage inherits Rectangle {
@@ -407,11 +387,11 @@ export component HomePage inherits Rectangle {
     in property <[HomeItem]> items: [];
     in property <[HomeItem]> dock-items: [];
     in property <int> columns: 4;
-    in property <int> rows: 5;
     in property <int> pages: 1;
     // List views: every Home app, in order.
     in property <[AppItem]> list-items: [];
     in property <AppsView> view: AppsView.grid;
+    in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
     in property <length> left-inset: 0px;
@@ -438,15 +418,17 @@ export component HomePage inherits Rectangle {
     property <length> drag-y;
     // While dragging there's one more (empty) page, to move an app to a new page.
     property <int> page-count: root.dragging ? root.pages + 1 : root.pages;
-    property <bool> over-top-bar: root.dragging && root.drag-y < top-bar.absolute-position.y + top-bar.height;
-    property <bool> over-remove: root.over-top-bar && (!root.drag-app.uninstallable || root.drag-x < top-bar.absolute-position.x + top-bar.width / 2);
-    property <bool> over-uninstall: root.over-top-bar && root.drag-app.uninstallable && !root.over-remove;
 
     property <length> swipe-offset: 0;
     // Axis of the current swipe: 0 none yet, 1 horizontal, 2 vertical.
     property <int> swipe-axis: 0;
-    // Minimum vertical swipe to open the Apps Menu / notifications.
+    // Minimum vertical swipe to open the Apps Menu / search.
     property <length> swipe-distance: 48px;
+
+    // Size of the dragged icon: the same as in the view (see AppGridItem, AppListItem).
+    property <length> drag-icon-size: root.grid
+        ? GridMetrics.icon-size(GridMetrics.column-width(root.width - root.left-inset - root.right-inset - 2 * AppsLayout.padding, root.columns))
+        : ListMetrics.icon-size();
 
     property <length> menu-x;
     property <length> menu-y;
@@ -454,6 +436,16 @@ export component HomePage inherits Rectangle {
     function clamp-page() {
         if root.current-page >= root.page-count {
             root.current-page = Math.max(0, root.page-count - 1);
+        }
+    }
+
+    // Swipe down on Home: search (the Apps Menu with its search focused) or the
+    // notifications panel, as chosen in Settings.
+    function swipe-down() {
+        if root.swipe-down-action == SwipeDownAction.notifications {
+            LauncherActions.expand-notifications();
+        } else {
+            root.open-apps-menu(true);
         }
     }
 
@@ -506,7 +498,7 @@ export component HomePage inherits Rectangle {
                 if self.dy <= -root.swipe-distance {
                     root.open-apps-menu(false);
                 } else if self.dy >= root.swipe-distance {
-                    LauncherActions.expand-notifications();
+                    root.swipe-down();
                 }
             }
             root.swipe-offset = 0;
@@ -524,35 +516,12 @@ export component HomePage inherits Rectangle {
             padding-right: root.right-inset;
             spacing: Tokens.spacing-xs;
 
-            top-bar := Rectangle {
-                height: 44px;
-
-                HorizontalLayout {
-                    padding-left: Tokens.spacing-m;
-                    padding-right: Tokens.spacing-m;
-                    spacing: Tokens.spacing-xs;
-
-                    if !root.dragging: HomeSearchBar {
-                        horizontal-stretch: 1;
-                        activated => { root.open-apps-menu(true); }
-                    }
-                    if root.dragging: DropTarget {
-                        text: I18n.t("app_actions.remove_from_home");
-                        active: root.over-remove;
-                    }
-                    if root.dragging && root.drag-app.uninstallable: DropTarget {
-                        text: I18n.t("app_actions.uninstall");
-                        active: root.over-uninstall;
-                    }
-                }
-            }
-
             if root.grid: HomeGrid {
                 vertical-stretch: 1;
                 items: root.items;
                 dock-items: root.dock-items;
                 columns: root.columns;
-                rows: root.rows;
+                rows-fit(rows) => { HomeActions.rows-fit(rows); }
                 page-count: root.page-count;
                 current-page <=> root.current-page;
                 swipe-offset: root.swipe-offset;
@@ -561,9 +530,6 @@ export component HomePage inherits Rectangle {
                 drag-app <=> root.drag-app;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
-                over-top-bar: root.over-top-bar;
-                over-remove: root.over-remove;
-                over-uninstall: root.over-uninstall;
                 empty-long-pressed(x, y) => { root.show-menu(x, y); }
             }
 
@@ -576,19 +542,17 @@ export component HomePage inherits Rectangle {
                 drag-app <=> root.drag-app;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
-                over-top-bar: root.over-top-bar;
-                over-remove: root.over-remove;
-                over-uninstall: root.over-uninstall;
                 empty-long-pressed(x, y) => { root.show-menu(x, y); }
-                open-apps-menu => { root.open-apps-menu(false); }
+                swiped-down => { root.swipe-down(); }
+                open-apps-menu(focus-search) => { root.open-apps-menu(focus-search); }
             }
         }
     }
 
     // The app being dragged, under the finger.
     if root.dragging: Rectangle {
-        width: 96px;
-        height: 96px;
+        width: Math.max(96px, AppsLayout.item-size);
+        height: Math.max(96px, AppsLayout.item-size);
         x: root.drag-x - root.absolute-position.x - self.width / 2;
         y: root.drag-y - root.absolute-position.y - self.height / 2;
 
@@ -601,8 +565,8 @@ export component HomePage inherits Rectangle {
 
                 Image {
                     source: root.drag-app.icon;
-                    width: GridMetrics.icon-size;
-                    height: GridMetrics.icon-size;
+                    width: root.drag-icon-size;
+                    height: root.drag-icon-size;
                 }
             }
 
@@ -610,6 +574,7 @@ export component HomePage inherits Rectangle {
                 text: root.drag-app.title;
                 font-size: GridMetrics.label-font-size;
                 horizontal-alignment: center;
+                wrap: AppsLayout.label-lines > 1 ? TextWrap.word-wrap : TextWrap.no-wrap;
             }
         }
     }

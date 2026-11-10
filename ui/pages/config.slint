@@ -1,9 +1,10 @@
 import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { LauncherScreens, AppsView } from "../types.slint";
+import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "../types.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { Select } from "../components/select.slint";
+import { Slider } from "../components/slider.slint";
 
 // A setting: label on the left, its control (the child) on the right.
 component SettingRow inherits HorizontalLayout {
@@ -24,6 +25,46 @@ component SettingRow inherits HorizontalLayout {
     @children
 }
 
+// A setting set with a slider: label and current value on top, slider below.
+component SliderSetting inherits VerticalLayout {
+    in property <string> label;
+    in property <string> unit;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <int> value: 0;
+
+    callback changed(value: int);
+
+    spacing: Tokens.spacing-2xs;
+
+    HorizontalLayout {
+        spacing: Tokens.spacing-s;
+
+        Text {
+            text: root.label;
+            font-size: 1rem;
+            color: Tokens.slu-std-fg-color;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "\{slider.current-value} \{root.unit}";
+            font-size: 1rem;
+            color: Tokens.slu-std-fg-secondary-color;
+            vertical-alignment: center;
+        }
+    }
+
+    slider := Slider {
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value: root.value;
+        changed(value) => { root.changed(value); }
+    }
+}
+
 // Section title.
 component SectionTitle inherits Text {
     font-size: 0.875rem;
@@ -36,20 +77,44 @@ export component ConfigPage inherits Rectangle {
     in property <length> bottom-inset: 0px;
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
+    in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
+    in property <IconShape> icon-shape: IconShape.system;
+    // Percent of the icon side (`ICON_CORNER_RADIUS_RANGE` in config.rs).
+    in property <int> icon-corner-radius: 25;
+    in property <LegacyIcons> legacy-icons: LegacyIcons.wrap;
     in property <int> home-columns: 4;
-    in property <int> home-rows: 5;
+    // Logical px. The item size is the one of the current view.
+    in property <int> item-size: 80;
+    in property <int> apps-padding: 8;
+    // Lines of the app titles (`LABEL_LINES_RANGE` in config.rs).
+    in property <int> label-lines: 1;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
-    callback home-grid-changed(columns: int, rows: int);
+    callback swipe-down-action-changed(value: SwipeDownAction);
+    callback icon-shape-changed(value: IconShape);
+    callback icon-corner-radius-changed(value: int);
+    callback legacy-icons-changed(value: LegacyIcons);
+    callback grid-columns-changed(columns: int);
+    callback item-size-changed(value: int);
+    callback apps-padding-changed(value: int);
+    callback label-lines-changed(value: int);
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
 
-    // Choices of the Home grid size (Settings > Home grid).
+    // Choices of Settings > Grid columns.
     property <[int]> column-choices: [3, 4, 5, 6];
-    property <[int]> row-choices: [4, 5, 6, 7];
-    property <bool> home-enabled: root.launcher-screens == LauncherScreens.home-and-apps-menu;
-    property <bool> home-grid-enabled: root.home-enabled && root.apps-view == AppsView.grid;
+    // Choices of Settings > Icon shape, in the order of its options.
+    property <[IconShape]> icon-shape-choices: [
+        IconShape.system,
+        IconShape.circle,
+        IconShape.squircle,
+        IconShape.teardrop,
+        IconShape.rounded-square,
+    ];
+    // Item size range of the current view (`AppsView::item_size_range` in config.rs).
+    property <int> item-size-min: root.apps-view == AppsView.grid ? 32 : root.apps-view == AppsView.list ? 40 : 32;
+    property <int> item-size-max: root.apps-view == AppsView.grid ? 96 : root.apps-view == AppsView.list ? 120 : 96;
 
     background: Tokens.slu-std-bg-color;
 
@@ -107,25 +172,118 @@ export component ConfigPage inherits Rectangle {
                 }
             }
 
-            // Only used by Home in the grid view.
-            if root.home-grid-enabled: SettingRow {
-                label: I18n.t("settings.home_columns");
+            // Only Home has the gesture.
+            if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
+                label: I18n.t("settings.swipe_down");
+
+                // Same order as the `SwipeDownAction` enum.
+                Select {
+                    options: [
+                        I18n.t("settings.swipe_down_search"),
+                        I18n.t("settings.swipe_down_notifications"),
+                    ];
+                    current-index: root.swipe-down-action == SwipeDownAction.search ? 0 : 1;
+                    selected(index) => {
+                        root.swipe-down-action-changed(index == 0 ? SwipeDownAction.search : SwipeDownAction.notifications);
+                    }
+                }
+            }
+
+            // Grid view: Home and the Apps Menu.
+            if root.apps-view == AppsView.grid: SettingRow {
+                label: I18n.t("settings.grid_columns");
 
                 Select {
                     options: ["3", "4", "5", "6"];
                     current-index: Math.max(0, root.home-columns - 3);
-                    selected(index) => { root.home-grid-changed(root.column-choices[index], root.home-rows); }
+                    selected(index) => { root.grid-columns-changed(root.column-choices[index]); }
                 }
             }
 
-            if root.home-grid-enabled: SettingRow {
-                label: I18n.t("settings.home_rows");
+            SectionTitle {
+                text: I18n.t("settings.section_apps");
+            }
 
+            // The text list shows no icons.
+            if root.apps-view != AppsView.text-list: SettingRow {
+                label: I18n.t("settings.icon_shape");
+
+                // Same order as `icon-shape-choices`.
                 Select {
-                    options: ["4", "5", "6", "7"];
-                    current-index: Math.max(0, root.home-rows - 4);
-                    selected(index) => { root.home-grid-changed(root.home-columns, root.row-choices[index]); }
+                    options: [
+                        I18n.t("settings.icon_shape_system"),
+                        I18n.t("settings.icon_shape_circle"),
+                        I18n.t("settings.icon_shape_squircle"),
+                        I18n.t("settings.icon_shape_teardrop"),
+                        I18n.t("settings.icon_shape_rounded_square"),
+                    ];
+                    current-index: root.icon-shape == IconShape.circle ? 1
+                        : root.icon-shape == IconShape.squircle ? 2
+                        : root.icon-shape == IconShape.teardrop ? 3
+                        : root.icon-shape == IconShape.rounded-square ? 4
+                        : 0;
+                    selected(index) => { root.icon-shape-changed(root.icon-shape-choices[index]); }
                 }
+            }
+
+            if root.apps-view != AppsView.text-list && root.icon-shape == IconShape.rounded-square: SliderSetting {
+                label: I18n.t("settings.icon_corner_radius");
+                unit: I18n.t("settings.unit_percent");
+                minimum: 0;
+                maximum: 50;
+                value: root.icon-corner-radius;
+                changed(value) => { root.icon-corner-radius-changed(value); }
+            }
+
+            if root.apps-view != AppsView.text-list: SettingRow {
+                label: I18n.t("settings.legacy_icons");
+
+                // Same order as the `LegacyIcons` enum.
+                Select {
+                    options: [
+                        I18n.t("settings.legacy_icons_wrap"),
+                        I18n.t("settings.legacy_icons_original"),
+                    ];
+                    current-index: root.legacy-icons == LegacyIcons.wrap ? 0 : 1;
+                    selected(index) => {
+                        root.legacy-icons-changed(index == 0 ? LegacyIcons.wrap : LegacyIcons.original);
+                    }
+                }
+            }
+
+            SliderSetting {
+                label: I18n.t("settings.item_size");
+                unit: I18n.t("settings.unit_px");
+                minimum: root.item-size-min;
+                maximum: root.item-size-max;
+                value: root.item-size;
+                changed(value) => { root.item-size-changed(value); }
+            }
+
+            SettingRow {
+                label: I18n.t("settings.label_lines");
+
+                // Index = lines - 1.
+                Select {
+                    options: [
+                        I18n.t("settings.label_lines_one"),
+                        I18n.t("settings.label_lines_two"),
+                    ];
+                    current-index: root.label-lines - 1;
+                    selected(index) => {
+                        root.label-lines-changed(index + 1);
+                    }
+                }
+            }
+
+            // Range of `APPS_PADDING_RANGE` (config.rs).
+            SliderSetting {
+                label: I18n.t("settings.apps_padding");
+                unit: I18n.t("settings.unit_px");
+                minimum: 0;
+                maximum: 60;
+                value: root.apps-padding;
+                changed(value) => { root.apps-padding-changed(value); }
             }
 
             SectionTitle {

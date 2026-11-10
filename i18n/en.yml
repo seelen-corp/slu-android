@@ -23,8 +23,28 @@ settings:
   apps_view_list: List
   apps_view_text_list: Text list
   apps_view_grid: Grid
-  home_columns: Home grid columns
-  home_rows: Home grid rows
+  swipe_down: Swipe down on Home
+  swipe_down_search: Search apps
+  swipe_down_notifications: Notifications
+  grid_columns: Grid columns
+  section_apps: Apps
+  icon_shape: Icon shape
+  icon_shape_system: System default
+  icon_shape_circle: Circle
+  icon_shape_squircle: Squircle
+  icon_shape_teardrop: Teardrop
+  icon_shape_rounded_square: Rounded square
+  icon_corner_radius: Corner radius
+  legacy_icons: Old-style icons
+  legacy_icons_wrap: Fit into the shape
+  legacy_icons_original: Keep as they are
+  unit_percent: "%"
+  item_size: App size
+  apps_padding: Space around apps
+  label_lines: App name
+  label_lines_one: One line
+  label_lines_two: Two lines
+  unit_px: px
   wallpaper: Wallpaper
   default_launcher: Default home app
   change: Change
