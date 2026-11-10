@@ -1,9 +1,16 @@
 import { Tokens } from "../tokens.slint";
 import { AppItemBase } from "app-item-base.slint";
+import { WallpaperLabel } from "wallpaper-label.slint";
 
-// Row of the list views: icon + title (list) or title only (text list).
+// Row of the list views: icon + title (list) or title only (text list). Drawn
+// over the wallpaper.
 export component AppListItem inherits AppItemBase {
     in property <bool> show-icon: true;
+    // Hides the visuals but keeps the touch alive (the app is being dragged).
+    in property <bool> content-hidden: false;
+
+    border-radius: Tokens.radius-s;
+    background: root.pressed ? Tokens.slu-std-ui-pressed-overlay : transparent;
 
     HorizontalLayout {
         padding-left: Tokens.spacing-m;
@@ -17,13 +24,13 @@ export component AppListItem inherits AppItemBase {
             source: root.app.icon;
             width: 48px;
             height: 48px;
+            visible: !root.content-hidden;
         }
 
-        Text {
+        WallpaperLabel {
             text: root.app.title;
             font-size: 1.125rem;
-            vertical-alignment: center;
-            overflow: elide;
+            visible: !root.content-hidden;
         }
     }
 }

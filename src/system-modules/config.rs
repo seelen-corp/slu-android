@@ -20,7 +20,7 @@ pub enum LauncherScreens {
     /// A single screen listing every app.
     #[default]
     AppsMenu,
-    /// A Home screen with the apps pinned by the user, plus the Apps Menu.
+    /// A Home screen with the apps placed by the user, plus the Apps Menu.
     HomeAndAppsMenu,
 }
 
@@ -72,55 +72,287 @@ impl AppsView {
     }
 }
 
-/// A launcher entry pinned to Home, identified the same way as
-/// `apps::AppInfo` (a package can expose several launcher activities).
+/// A launcher entry, identified the same way as `apps::AppInfo` (a package can
+/// expose several launcher activities).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PinnedApp {
+pub struct AppRef {
     pub package_name: String,
     pub activity_name: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl AppRef {
+    pub fn new(package_name: &str, activity_name: &str) -> Self {
+        Self {
+            package_name: package_name.to_owned(),
+            activity_name: activity_name.to_owned(),
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        let (package_name, activity_name) = value.trim().split_once('/')?;
+        (!package_name.is_empty() && !activity_name.is_empty())
+            .then(|| Self::new(package_name, activity_name))
+    }
+
+    fn serialize(&self) -> String {
+        format!("{}/{}", self.package_name, self.activity_name)
+    }
+}
+
+/// Where an app is placed on Home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Slot {
+    /// A cell of a grid page. Ordered page by page, row by row.
+    Grid { page: u32, row: u32, col: u32 },
+    /// A slot of the dock (below the pages, the same on every page).
+    Dock { col: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeEntry {
+    pub app: AppRef,
+    pub slot: Slot,
+}
+
+pub const DEFAULT_HOME_COLUMNS: u32 = 4;
+pub const DEFAULT_HOME_ROWS: u32 = 5;
+pub const HOME_COLUMNS_RANGE: std::ops::RangeInclusive<u32> = 3..=6;
+pub const HOME_ROWS_RANGE: std::ops::RangeInclusive<u32> = 4..=7;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub launcher_screens: LauncherScreens,
     pub apps_view: AppsView,
-    /// In display order.
-    pub pinned: Vec<PinnedApp>,
+    /// Home grid size (grid view): cells per page, and slots of the dock.
+    pub home_columns: u32,
+    pub home_rows: u32,
+    /// Apps on Home. Entries of apps that are not installed are kept (they come
+    /// back if the app is reinstalled, or mid-update when it's briefly gone),
+    /// until the user edits Home.
+    pub home: Vec<HomeEntry>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            launcher_screens: LauncherScreens::default(),
+            apps_view: AppsView::default(),
+            home_columns: DEFAULT_HOME_COLUMNS,
+            home_rows: DEFAULT_HOME_ROWS,
+            home: Vec::new(),
+        }
+    }
 }
 
 impl Config {
-    pub fn is_pinned(&self, package_name: &str, activity_name: &str) -> bool {
-        self.pinned
+    pub fn is_on_home(&self, app: &AppRef) -> bool {
+        self.home.iter().any(|entry| entry.app == *app)
+    }
+
+    fn fits(&self, slot: Slot) -> bool {
+        match slot {
+            Slot::Grid { row, col, .. } => col < self.home_columns && row < self.home_rows,
+            Slot::Dock { col } => col < self.home_columns,
+        }
+    }
+
+    fn is_free(&self, slot: Slot) -> bool {
+        !self.home.iter().any(|entry| entry.slot == slot)
+    }
+
+    /// The first free grid cell, page by page.
+    fn first_free_cell(&self) -> Slot {
+        (0..)
+            .flat_map(|page| {
+                (0..self.home_rows).flat_map(move |row| {
+                    (0..self.home_columns).map(move |col| Slot::Grid { page, row, col })
+                })
+            })
+            .find(|slot| self.is_free(*slot))
+            .expect("there is always a free cell")
+    }
+
+    /// Puts an app in the first free grid cell (no-op if it's already on Home).
+    pub fn add_to_home(&mut self, app: AppRef, installed: impl Fn(&AppRef) -> bool) {
+        if !installed(&app) {
+            return;
+        }
+        self.drop_uninstalled(&installed);
+        if !self.is_on_home(&app) {
+            let slot = self.first_free_cell();
+            self.home.push(HomeEntry { app, slot });
+        }
+        self.compact_pages();
+    }
+
+    pub fn remove_from_home(&mut self, app: &AppRef, installed: impl Fn(&AppRef) -> bool) {
+        self.drop_uninstalled(&installed);
+        self.home.retain(|entry| entry.app != *app);
+        self.compact_pages();
+    }
+
+    /// Moves an app on Home to `slot`; if another app is there, they swap.
+    pub fn move_to(&mut self, app: &AppRef, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
+        if !self.fits(slot) {
+            return;
+        }
+        self.drop_uninstalled(&installed);
+        let Some(from) = self.home.iter().position(|entry| entry.app == *app) else {
+            return;
+        };
+        let old_slot = self.home[from].slot;
+        if let Some(other) = self.home.iter_mut().find(|entry| entry.slot == slot) {
+            other.slot = old_slot;
+        }
+        self.home[from].slot = slot;
+        self.compact_pages();
+    }
+
+    /// List views: moves an app to `index` of the Home list (`list_order`); the
+    /// apps in between shift. The set of used slots doesn't change, only which
+    /// app is in each one, so the grid layout keeps its shape.
+    pub fn move_to_index(
+        &mut self,
+        app: &AppRef,
+        index: usize,
+        installed: impl Fn(&AppRef) -> bool,
+    ) {
+        self.drop_uninstalled(&installed);
+        let order = self.list_order();
+        let slots: Vec<Slot> = order.iter().map(|&i| self.home[i].slot).collect();
+        let mut apps: Vec<AppRef> = order.iter().map(|&i| self.home[i].app.clone()).collect();
+        let Some(from) = apps.iter().position(|a| a == app) else {
+            return;
+        };
+        let moved = apps.remove(from);
+        apps.insert(index.min(apps.len()), moved);
+        self.home = apps
+            .into_iter()
+            .zip(slots)
+            .map(|(app, slot)| HomeEntry { app, slot })
+            .collect();
+    }
+
+    /// Indexes of `home` in list order: the grid page by page, then the dock.
+    pub fn list_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.home.len()).collect();
+        order.sort_by_key(|&i| self.home[i].slot);
+        order
+    }
+
+    /// Number of grid pages (at least one).
+    pub fn home_pages(&self) -> u32 {
+        self.home
             .iter()
-            .any(|p| p.package_name == package_name && p.activity_name == activity_name)
+            .filter_map(|entry| match entry.slot {
+                Slot::Grid { page, .. } => Some(page + 1),
+                Slot::Dock { .. } => None,
+            })
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// Fixes a layout that doesn't fit the grid size (e.g. it was made smaller in
+    /// Settings) or that is otherwise invalid: duplicated apps or slots, apps
+    /// outside the grid. Those apps go to the first free cells. Returns whether
+    /// anything changed.
+    pub fn normalize(&mut self) -> bool {
+        let before = self.home.clone();
+        let mut kept: Vec<HomeEntry> = Vec::with_capacity(self.home.len());
+        let mut misplaced: Vec<AppRef> = Vec::new();
+        for entry in std::mem::take(&mut self.home) {
+            if kept.iter().any(|k| k.app == entry.app) {
+                continue;
+            }
+            if self.fits(entry.slot) && !kept.iter().any(|k| k.slot == entry.slot) {
+                kept.push(entry);
+            } else {
+                misplaced.push(entry.app);
+            }
+        }
+        self.home = kept;
+        for app in misplaced {
+            let slot = self.first_free_cell();
+            self.home.push(HomeEntry { app, slot });
+        }
+        self.compact_pages();
+        self.home != before
+    }
+
+    fn drop_uninstalled(&mut self, installed: impl Fn(&AppRef) -> bool) {
+        self.home.retain(|entry| installed(&entry.app));
+    }
+
+    /// Removes empty pages between used ones (renumbers the pages after them).
+    fn compact_pages(&mut self) {
+        let mut pages: Vec<u32> = self
+            .home
+            .iter()
+            .filter_map(|entry| match entry.slot {
+                Slot::Grid { page, .. } => Some(page),
+                Slot::Dock { .. } => None,
+            })
+            .collect();
+        pages.sort_unstable();
+        pages.dedup();
+        for entry in &mut self.home {
+            if let Slot::Grid { page, .. } = &mut entry.slot {
+                *page = pages.iter().position(|p| p == page).unwrap_or(0) as u32;
+            }
+        }
     }
 
     fn parse(text: &str) -> Self {
         let mut config = Config::default();
+        // `pinned=` (older versions): apps in Home order, without a cell.
+        let mut legacy_pinned: Vec<AppRef> = Vec::new();
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
+            let value = value.trim();
             match key.trim() {
                 "launcher_screens" => {
-                    if let Some(screens) = LauncherScreens::parse(value.trim()) {
+                    if let Some(screens) = LauncherScreens::parse(value) {
                         config.launcher_screens = screens;
                     }
                 }
                 "apps_view" => {
-                    if let Some(view) = AppsView::parse(value.trim()) {
+                    if let Some(view) = AppsView::parse(value) {
                         config.apps_view = view;
                     }
                 }
+                "home_columns" => {
+                    if let Some(n) = value
+                        .parse()
+                        .ok()
+                        .filter(|n| HOME_COLUMNS_RANGE.contains(n))
+                    {
+                        config.home_columns = n;
+                    }
+                }
+                "home_rows" => {
+                    if let Some(n) = value.parse().ok().filter(|n| HOME_ROWS_RANGE.contains(n)) {
+                        config.home_rows = n;
+                    }
+                }
+                "home" => {
+                    if let Some(entry) = parse_home_entry(value) {
+                        config.home.push(entry);
+                    }
+                }
                 "pinned" => {
-                    if let Some((package_name, activity_name)) = value.trim().split_once('/') {
-                        config.pinned.push(PinnedApp {
-                            package_name: package_name.to_owned(),
-                            activity_name: activity_name.to_owned(),
-                        });
+                    if let Some(app) = AppRef::parse(value) {
+                        legacy_pinned.push(app);
                     }
                 }
                 _ => {}
+            }
+        }
+        for app in legacy_pinned {
+            if !config.is_on_home(&app) {
+                let slot = config.first_free_cell();
+                config.home.push(HomeEntry { app, slot });
             }
         }
         config
@@ -128,18 +360,49 @@ impl Config {
 
     fn serialize(&self) -> String {
         let mut text = format!(
-            "launcher_screens={}\napps_view={}\n",
+            "launcher_screens={}\napps_view={}\nhome_columns={}\nhome_rows={}\n",
             self.launcher_screens.as_str(),
-            self.apps_view.as_str()
+            self.apps_view.as_str(),
+            self.home_columns,
+            self.home_rows,
         );
-        for pinned in &self.pinned {
-            text.push_str(&format!(
-                "pinned={}/{}\n",
-                pinned.package_name, pinned.activity_name
-            ));
+        for entry in &self.home {
+            let slot = match entry.slot {
+                Slot::Grid { page, row, col } => format!("grid,{page},{row},{col}"),
+                Slot::Dock { col } => format!("dock,{col}"),
+            };
+            text.push_str(&format!("home={slot},{}\n", entry.app.serialize()));
         }
         text
     }
+}
+
+/// `grid,<page>,<row>,<col>,<package>/<activity>` or `dock,<col>,<package>/<activity>`.
+fn parse_home_entry(value: &str) -> Option<HomeEntry> {
+    let (kind, rest) = value.split_once(',')?;
+    let (slot, app) = match kind {
+        "grid" => {
+            let mut parts = rest.splitn(4, ',');
+            let page = parts.next()?.parse().ok()?;
+            let row = parts.next()?.parse().ok()?;
+            let col = parts.next()?.parse().ok()?;
+            (Slot::Grid { page, row, col }, parts.next()?)
+        }
+        "dock" => {
+            let (col, app) = rest.split_once(',')?;
+            (
+                Slot::Dock {
+                    col: col.parse().ok()?,
+                },
+                app,
+            )
+        }
+        _ => return None,
+    };
+    Some(HomeEntry {
+        app: AppRef::parse(app)?,
+        slot,
+    })
 }
 
 /// Must be called once from `android_main` with the app's internal data
@@ -170,10 +433,165 @@ pub fn load() -> Result<Config> {
 pub fn update(change: impl FnOnce(&mut Config)) -> Result<Config> {
     let mut config = load()?;
     change(&mut config);
+    save(&config)?;
+    Ok(config)
+}
 
+fn save(config: &Config) -> Result<()> {
     let path = path()?;
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, config.serialize())?;
     std::fs::rename(&tmp, path)?;
-    Ok(config)
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(n: u32) -> AppRef {
+        AppRef::new(&format!("p{n}"), &format!("p{n}.Main"))
+    }
+
+    fn all(_: &AppRef) -> bool {
+        true
+    }
+
+    #[test]
+    fn roundtrip() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.home.push(HomeEntry {
+            app: app(2),
+            slot: Slot::Dock { col: 2 },
+        });
+        assert_eq!(Config::parse(&config.serialize()), config);
+    }
+
+    #[test]
+    fn legacy_pinned_fill_cells() {
+        let config = Config::parse("pinned=p1/p1.Main\npinned=p2/p2.Main\n");
+        assert_eq!(
+            config.home[0].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 0
+            }
+        );
+        assert_eq!(
+            config.home[1].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 1
+            }
+        );
+    }
+
+    #[test]
+    fn move_swaps_and_compacts() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_to_home(app(2), all);
+        config.move_to(
+            &app(1),
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 1,
+            },
+            all,
+        );
+        assert_eq!(
+            config.home[0].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 1
+            }
+        );
+        assert_eq!(
+            config.home[1].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 0
+            }
+        );
+        // Alone on a new page 1 after page 0 is left empty: it becomes page 0.
+        config.move_to(&app(1), Slot::Dock { col: 0 }, all);
+        config.move_to(
+            &app(2),
+            Slot::Grid {
+                page: 1,
+                row: 2,
+                col: 2,
+            },
+            all,
+        );
+        assert_eq!(
+            config.home[1].slot,
+            Slot::Grid {
+                page: 0,
+                row: 2,
+                col: 2
+            }
+        );
+        assert_eq!(config.home_pages(), 1);
+    }
+
+    #[test]
+    fn move_to_index_keeps_slots() {
+        let mut config = Config::default();
+        for n in 1..=3 {
+            config.add_to_home(app(n), all);
+        }
+        config.move_to_index(&app(3), 0, all);
+        let order: Vec<_> = config
+            .list_order()
+            .into_iter()
+            .map(|i| config.home[i].app.clone())
+            .collect();
+        assert_eq!(order, vec![app(3), app(1), app(2)]);
+        assert_eq!(
+            config.home[0].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 0
+            }
+        );
+    }
+
+    #[test]
+    fn normalize_moves_out_of_grid() {
+        let mut config = Config::default();
+        config.home.push(HomeEntry {
+            app: app(1),
+            slot: Slot::Grid {
+                page: 0,
+                row: 6,
+                col: 5,
+            },
+        });
+        config.home.push(HomeEntry {
+            app: app(2),
+            slot: Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 0,
+            },
+        });
+        assert!(config.normalize());
+        assert_eq!(
+            config.home[1].slot,
+            Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 1
+            }
+        );
+        assert!(!config.normalize());
+    }
 }

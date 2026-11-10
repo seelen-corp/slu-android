@@ -1,0 +1,53 @@
+import { Tokens } from "../tokens.slint";
+
+// Standard popup surface (`.slu-std-popover`): opaque base surface, `shadow-m`,
+// `radius-m`. Put it inside a `PopupWindow`; the items go in as children.
+export component MenuSurface inherits Rectangle {
+    background: Tokens.slu-std-bg-color;
+    border-radius: Tokens.radius-m;
+    drop-shadow-offset-x: Tokens.shadow-m-offset;
+    drop-shadow-offset-y: Tokens.shadow-m-offset;
+    drop-shadow-blur: Tokens.shadow-m-blur;
+    drop-shadow-color: Tokens.shadow-m-color;
+
+    VerticalLayout {
+        padding: Tokens.spacing-xs;
+
+        @children
+    }
+}
+
+// An entry of a `MenuSurface`: transparent, pressed overlay, selected overlay.
+export component MenuItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected: false;
+
+    callback activated();
+
+    min-height: 44px;
+    // Concentric with the `MenuSurface` (radius-m around a spacing-xs padding).
+    border-radius: max(0px, Tokens.radius-m - Tokens.spacing-xs);
+    background: touch.pressed ? Tokens.slu-std-ui-pressed-overlay
+        : root.selected ? Tokens.slu-std-ui-selected-overlay : transparent;
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.activated(); }
+
+    HorizontalLayout {
+        padding-left: Tokens.spacing-s;
+        padding-right: Tokens.spacing-s;
+
+        Text {
+            text: root.text;
+            font-size: 1rem;
+            color: Tokens.slu-std-fg-color;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.activated(); }
+    }
+}

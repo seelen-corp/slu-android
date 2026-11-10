@@ -48,8 +48,25 @@ Rules (summary of the manifesto — the manifesto wins on any doubt):
 - Check every UI change in **light and dark** mode and with a **non-default accent**. Use the manifesto's checklist
   (§9) before finishing.
 
-> Existing code still has legacy patterns (hardcoded `color: black`, `px` font sizes, no tokens global yet). Never copy
-> them; migrate them when touching that code.
+Where things live:
+
+- Tokens: `ui/tokens.slint` (`Tokens` global: spacing, radius, gray scales, `slu-std-*`, `system-accent-*`, shadows).
+  The accent is read from Android (`system-modules/theme.rs`, Material You tones on 12+) and set from Rust.
+- Standard components: `ui/components/` (`button`, `text-field`, `select`, `menu` = popover surface + items,
+  `wallpaper-label`). App entries share their touch behaviour through `app-item-base.slint`.
+
+Launcher-specific exception (maintainer-approved): Home and the Apps Menu draw directly over the **system wallpaper**
+(transparent window, wallpaper theme in the manifest). Text there uses `Tokens.wallpaper-fg-color`, picked from the
+wallpaper's own brightness hint (content-derived color), plus the manifesto's "text-shadow over dynamic images"
+exception (`WallpaperLabel`). Popups, inputs and drop targets on top of it stay opaque standard surfaces.
+
+Slint gotchas (1.17):
+
+- `ScrollView`/`ListView` ignore touch drags unless `mouse-drag-pan-enabled: true`. Always set it.
+- Inside a `PopupWindow`, run the action **before** `popup.close()`: after closing, the popup's bindings (e.g.
+  `root.app`) read default values.
+- Gesture parents (`SwipeGestureHandler`, Flickable) steal moves from children; an entry that recognized a long press
+  sets `Interaction.item-lifted`, and gesture handlers are disabled while it's set.
 
 ## i18n
 

@@ -3,56 +3,50 @@ import { AppItem, AppsView } from "../types.slint";
 import { AppListItem } from "app-list-item.slint";
 import { AppGrid } from "app-grid.slint";
 
-// A set of apps shown in the view chosen in Settings (list, text list or grid).
+// The Apps Menu's apps, in the view chosen in Settings (list, text list or grid),
+// scrollable.
 export component AppCollection inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
-    // Shown on Home (vs. the Apps Menu); decides the context menu actions.
-    in property <bool> on-home: false;
     in property <bool> home-enabled: false;
-    // Grid only: false leaves vertical drags to the parent (Home's swipe up).
-    in property <bool> grid-scrollable: true;
-    // Scrollable grid only: scrolled to the very top (a swipe down there is free
-    // for the parent, e.g. to go back to Home).
-    out property <bool> grid-at-top: self.grid-scroll-y >= 0;
+    // Scrolled to the very top (a swipe down there is free for the parent).
+    out property <bool> at-top: self.scroll-y >= 0;
 
-    // Bound to the grid ScrollView's viewport-y (0 at the top, negative when scrolled).
-    property <length> grid-scroll-y: 0;
+    // The viewport-y of the list/grid (0 at the top, negative when scrolled).
+    property <length> scroll-y: 0;
+
+    public function scroll-to-top() {
+        self.scroll-y = 0;
+    }
 
     vertical-stretch: 1;
 
+    // `mouse-drag-pan-enabled`: Slint's ScrollView/ListView ignore drags by
+    // default, and that includes touch: without it they only scroll with a wheel.
     if root.view != AppsView.grid: ListView {
         width: root.width;
         height: root.height;
+        mouse-drag-pan-enabled: true;
+        viewport-y <=> root.scroll-y;
 
         for app in root.apps: AppListItem {
             app: app;
             show-icon: root.view == AppsView.list;
-            on-home: root.on-home;
             home-enabled: root.home-enabled;
         }
     }
 
-    if root.view == AppsView.grid && root.grid-scrollable: scroll := ScrollView {
+    if root.view == AppsView.grid: scroll := ScrollView {
         width: root.width;
         height: root.height;
-        viewport-height: scrolled-grid.preferred-height;
-        viewport-y <=> root.grid-scroll-y;
+        mouse-drag-pan-enabled: true;
+        viewport-height: grid.preferred-height;
+        viewport-y <=> root.scroll-y;
 
-        scrolled-grid := AppGrid {
+        grid := AppGrid {
             width: scroll.visible-width;
             apps: root.apps;
-            on-home: root.on-home;
             home-enabled: root.home-enabled;
         }
-    }
-
-    if root.view == AppsView.grid && !root.grid-scrollable: AppGrid {
-        width: root.width;
-        height: self.preferred-height;
-        y: 0;
-        apps: root.apps;
-        on-home: root.on-home;
-        home-enabled: root.home-enabled;
     }
 }

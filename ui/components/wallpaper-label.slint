@@ -1,0 +1,48 @@
+import { Tokens } from "../tokens.slint";
+
+// Text drawn directly over the wallpaper (Home, Apps Menu). Its color comes from
+// the wallpaper (content-derived), plus the "text-shadow over dynamic images" UX
+// exception for legibility. Slint has no text-shadow: it's a copy of the text
+// one pixel below, in the shadow color.
+export component WallpaperLabel inherits Rectangle {
+    in property <string> text;
+    in property <length> font-size: 1rem;
+    in property <int> font-weight: 400;
+    in property <TextHorizontalAlignment> horizontal-alignment: TextHorizontalAlignment.left;
+    in property <TextVerticalAlignment> vertical-alignment: TextVerticalAlignment.center;
+    in property <TextWrap> wrap: TextWrap.no-wrap;
+
+    preferred-height: label.preferred-height;
+    min-height: label.min-height;
+    preferred-width: label.preferred-width;
+    min-width: 0;
+
+    if Tokens.wallpaper-text-shadow: Text {
+        x: 1px;
+        y: 1px;
+        width: label.width;
+        height: label.height;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        horizontal-alignment: root.horizontal-alignment;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+        color: Tokens.wallpaper-text-shadow-color;
+        accessible-role: none;
+    }
+
+    label := Text {
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        horizontal-alignment: root.horizontal-alignment;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+        color: Tokens.wallpaper-fg-color;
+    }
+}

@@ -1,0 +1,81 @@
+import { Tokens } from "../tokens.slint";
+
+// Button skins of the manifesto (`data-skin`).
+export enum ButtonSkin {
+    // Secondary actions: raised surface.
+    default,
+    // The one primary action of a view: accent background.
+    solid,
+    // Toolbar-like actions: only a pressed overlay.
+    transparent,
+}
+
+// Standard button. The only button of the UI: never restyle it per page.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <ButtonSkin> skin: ButtonSkin.default;
+    in property <bool> enabled: true;
+    // Transparent skin drawn over the wallpaper (Home, Apps Menu): its text
+    // follows the wallpaper instead of the surface.
+    in property <bool> over-wallpaper: false;
+
+    callback clicked();
+
+    min-height: 40px;
+    min-width: 40px;
+    horizontal-stretch: 0;
+    border-radius: Tokens.radius-s;
+    opacity: root.enabled ? 1 : 0.5;
+    background: {
+        if root.skin == ButtonSkin.solid {
+            return touch.pressed ? Tokens.slu-std-ui-hover-color : Tokens.slu-std-ui-color;
+        }
+        if root.skin == ButtonSkin.default {
+            return Tokens.slu-std-bg-light-color;
+        }
+        return touch.pressed ? Tokens.slu-std-ui-pressed-overlay : transparent;
+    }
+    drop-shadow-offset-x: root.skin == ButtonSkin.transparent ? 0 : Tokens.shadow-s-offset;
+    drop-shadow-offset-y: root.skin == ButtonSkin.transparent ? 0 : Tokens.shadow-s-offset;
+    drop-shadow-blur: root.skin == ButtonSkin.transparent ? 0 : Tokens.shadow-s-blur;
+    drop-shadow-color: root.skin == ButtonSkin.transparent ? transparent : Tokens.shadow-s-color;
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+
+    HorizontalLayout {
+        padding-left: Tokens.spacing-m;
+        padding-right: Tokens.spacing-m;
+        padding-top: Tokens.spacing-xs;
+        padding-bottom: Tokens.spacing-xs;
+        alignment: center;
+
+        Text {
+            text: root.text;
+            font-size: 1rem;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            overflow: elide;
+            color: {
+                if root.skin == ButtonSkin.solid {
+                    return Tokens.slu-std-ui-fg-color;
+                }
+                if root.skin == ButtonSkin.default && touch.pressed {
+                    return Tokens.slu-std-ui-hover-color;
+                }
+                if root.over-wallpaper {
+                    return Tokens.wallpaper-fg-color;
+                }
+                return Tokens.slu-std-fg-color;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}

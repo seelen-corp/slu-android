@@ -8,15 +8,27 @@ export struct AppItem {
     activity-name: string,
     // False for system apps.
     uninstallable: bool,
-    // Pinned to Home by the user.
+    // On Home (grid or dock).
     pinned: bool,
+}
+
+// An app placed on Home: a cell of a grid page, or a slot of the dock.
+export struct HomeItem {
+    app: AppItem,
+    dock: bool,
+    // Grid page (ignored in the dock).
+    page: int,
+    // Grid column, or dock slot.
+    col: int,
+    // Grid row (ignored in the dock).
+    row: int,
 }
 
 // Settings > Launcher screens.
 export enum LauncherScreens {
     // A single screen listing every app.
     apps-menu,
-    // Home (apps pinned by the user) + Apps Menu.
+    // Home (apps placed by the user) + Apps Menu.
     home-and-apps-menu,
 }
 

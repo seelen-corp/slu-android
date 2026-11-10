@@ -1,52 +1,80 @@
 import { I18n } from "../i18n.slint";
-import { AppActions } from "../app-actions.slint";
+import { AppActions, Interaction, LauncherActions } from "../app-actions.slint";
 import { AppItem } from "../types.slint";
+import { MenuSurface, MenuItem } from "menu.slint";
 
-// Behaviour shared by every app entry (list row, grid cell): tap opens the app,
-// long press shows its context menu. The visuals are the children.
+// Behaviour shared by every app entry (list row, grid cell, Home cell): tap opens
+// the app; a long press "lifts" it (haptic tick); releasing a lifted entry shows
+// its menu, and moving it (only `draggable` entries, on Home) drags it instead.
+// The visuals are the children.
 export component AppItemBase inherits Rectangle {
     in property <AppItem> app;
-    // Entry shown on Home (vs. the Apps Menu); decides the context menu actions.
+    // Entry shown on Home (vs. the Apps Menu); decides the menu actions.
     in property <bool> on-home: false;
-    // Home screen enabled in Settings, so apps can be pinned to it.
+    // Home screen enabled in Settings, so apps can be placed on it.
     in property <bool> home-enabled: false;
+    in property <bool> draggable: false;
 
-    // Set once the long press has shown the menu, so releasing doesn't also open the app.
-    private property <bool> long-press-fired: false;
+    // Touch is down on the entry (for the pressed overlay).
+    out property <bool> pressed: touch.pressed;
+    // A long press was recognized and the touch is still down.
+    out property <bool> lifted: touch.pressed && root.long-pressed;
+    out property <bool> dragging: false;
 
-    // Below the TouchArea: it never gets the touch itself, the long press below
-    // shows it. (Slint's own Android long press would swallow taps.)
-    menu-area := ContextMenuArea {
-        Menu {
-            if !root.on-home && root.home-enabled && !root.app.pinned: MenuItem {
-                title: I18n.t("app_actions.add_to_home");
-                activated => { AppActions.add-to-home(root.app); }
-            }
-            if root.on-home: MenuItem {
-                title: I18n.t("app_actions.remove_from_home");
-                activated => { AppActions.remove-from-home(root.app); }
-            }
-            if !root.on-home: MenuItem {
-                title: I18n.t("app_actions.app_info");
-                activated => { AppActions.app-info(root.app); }
-            }
-            if root.app.uninstallable: MenuItem {
-                title: I18n.t("app_actions.uninstall");
-                activated => { AppActions.uninstall(root.app); }
-            }
-        }
-    }
+    // Drag of a `draggable` entry. Positions are in window coordinates.
+    callback drag-started(x: length, y: length);
+    callback drag-moved(x: length, y: length);
+    callback drag-ended(x: length, y: length);
+
+    // Set by the long press until the next touch, so releasing doesn't also open the app.
+    private property <bool> long-pressed: false;
+    // Moved beyond the tap slop before the long press: it's a scroll/swipe, not a press.
+    private property <bool> moved-away: false;
+    private property <length> slop: 8px;
+    private property <length> pointer-x: root.absolute-position.x + touch.mouse-x;
+    private property <length> pointer-y: root.absolute-position.y + touch.mouse-y;
 
     @children
 
     touch := TouchArea {
         pointer-event(event) => {
+            if event.button != PointerEventButton.left {
+                return;
+            }
             if event.kind == PointerEventKind.down {
-                root.long-press-fired = false;
+                root.long-pressed = false;
+                root.moved-away = false;
+                root.dragging = false;
+            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                if root.dragging {
+                    root.dragging = false;
+                    root.drag-ended(root.pointer-x, root.pointer-y);
+                } else if root.long-pressed && event.kind == PointerEventKind.up {
+                    menu.show();
+                }
+                Interaction.item-lifted = false;
             }
         }
+
+        moved => {
+            let far = abs(self.mouse-x - self.pressed-x) > root.slop || abs(self.mouse-y - self.pressed-y) > root.slop;
+            if !root.long-pressed {
+                if far {
+                    root.moved-away = true;
+                }
+                return;
+            }
+            if root.draggable && !root.dragging && far {
+                root.dragging = true;
+                root.drag-started(root.pointer-x, root.pointer-y);
+            }
+            if root.dragging {
+                root.drag-moved(root.pointer-x, root.pointer-y);
+            }
+        }
+
         clicked => {
-            if !root.long-press-fired {
+            if !root.long-pressed {
                 AppActions.launch(root.app);
             }
         }
@@ -54,10 +82,50 @@ export component AppItemBase inherits Rectangle {
 
     Timer {
         interval: 500ms;
-        running: touch.pressed && !root.long-press-fired;
+        running: touch.pressed && !root.long-pressed && !root.moved-away;
         triggered => {
-            root.long-press-fired = true;
-            menu-area.show({ x: touch.pressed-x, y: touch.pressed-y });
+            root.long-pressed = true;
+            // From now on this entry owns the touch (no page/list swipes).
+            Interaction.item-lifted = true;
+            LauncherActions.haptic();
+        }
+    }
+
+    menu := PopupWindow {
+        x: touch.pressed-x;
+        y: touch.pressed-y;
+
+        MenuSurface {
+            min-width: 200px;
+
+            if !root.on-home && root.home-enabled && !root.app.pinned: MenuItem {
+                text: I18n.t("app_actions.add_to_home");
+                activated => {
+                    AppActions.add-to-home(root.app);
+                    menu.close();
+                }
+            }
+            if root.on-home: MenuItem {
+                text: I18n.t("app_actions.remove_from_home");
+                activated => {
+                    AppActions.remove-from-home(root.app);
+                    menu.close();
+                }
+            }
+            MenuItem {
+                text: I18n.t("app_actions.app_info");
+                activated => {
+                    AppActions.app-info(root.app);
+                    menu.close();
+                }
+            }
+            if root.app.uninstallable: MenuItem {
+                text: I18n.t("app_actions.uninstall");
+                activated => {
+                    AppActions.uninstall(root.app);
+                    menu.close();
+                }
+            }
         }
     }
 }

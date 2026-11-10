@@ -1,11 +1,40 @@
 import { AppItem } from "types.slint";
 
 // Actions on an app, implemented in Rust. Called by every app entry (list row,
-// grid cell) wherever it is shown.
+// grid cell, Home cell) wherever it is shown.
 export global AppActions {
     callback launch(app: AppItem);
     callback add-to-home(app: AppItem);
     callback remove-from-home(app: AppItem);
     callback app-info(app: AppItem);
     callback uninstall(app: AppItem);
+}
+
+// Home layout edits, implemented in Rust.
+export global HomeActions {
+    // Moves an app already on Home to a grid cell or dock slot. If another app is
+    // there, both swap places.
+    callback move-to(app: AppItem, dock: bool, page: int, col: int, row: int);
+    // List views: moves an app to another position of the list (the other apps
+    // shift, keeping the cells the layout uses).
+    callback move-to-index(app: AppItem, index: int);
+}
+
+// Launcher/system actions, implemented in Rust.
+export global LauncherActions {
+    callback open-settings();
+    callback open-wallpaper-picker();
+    callback expand-notifications();
+    // Short haptic tick (e.g. when a long press is recognized).
+    callback haptic();
+    // Apps Menu search; Rust filters the apps shown.
+    callback search(query: string);
+}
+
+// Touch interaction state shared by the app entries and the gesture handlers
+// around them.
+export global Interaction {
+    // An app entry recognized a long press and owns the touch until it's
+    // released: the page/Apps Menu swipe gestures must not take it over.
+    in-out property <bool> item-lifted: false;
 }

@@ -1,0 +1,71 @@
+import { Tokens } from "../tokens.slint";
+
+// Standard single-line text input (`data-skin="default"`): raised surface, focus
+// ring while focused.
+export component TextField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <InputType> input-type: InputType.text;
+    out property <bool> has-focus: input.has-focus;
+
+    callback edited(text: string);
+    // Enter pressed.
+    callback accepted(text: string);
+
+    public function focus-text() {
+        input.focus();
+    }
+
+    public function unfocus-text() {
+        input.clear-focus();
+    }
+
+    min-height: 44px;
+    horizontal-stretch: 1;
+    border-radius: Tokens.radius-s;
+    background: Tokens.slu-std-bg-light-color;
+    // Focus ring (UX exception: shows where the keyboard input goes).
+    border-width: input.has-focus ? 2px : 0;
+    border-color: Tokens.system-accent-color;
+    drop-shadow-offset-x: Tokens.shadow-s-offset;
+    drop-shadow-offset-y: Tokens.shadow-s-offset;
+    drop-shadow-blur: Tokens.shadow-s-blur;
+    drop-shadow-color: Tokens.shadow-s-color;
+
+    // Tapping the padding also focuses the input.
+    TouchArea {
+        clicked => { input.focus(); }
+    }
+
+    HorizontalLayout {
+        padding-left: Tokens.spacing-s;
+        padding-right: Tokens.spacing-s;
+
+        Rectangle {
+            placeholder-text := Text {
+                width: 100%;
+                height: 100%;
+                text: root.placeholder;
+                visible: input.text == "";
+                font-size: 1rem;
+                color: Tokens.slu-std-fg-muted-color;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                single-line: true;
+                input-type: root.input-type;
+                font-size: 1rem;
+                color: Tokens.slu-std-fg-color;
+                selection-background-color: Tokens.slu-std-ui-selected-overlay;
+                selection-foreground-color: Tokens.slu-std-fg-color;
+                vertical-alignment: center;
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(self.text); }
+            }
+        }
+    }
+}

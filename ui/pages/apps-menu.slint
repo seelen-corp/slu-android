@@ -1,37 +1,83 @@
-import { Button } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
+import { AppActions, Interaction, LauncherActions } from "../app-actions.slint";
 import { AppItem, AppsView } from "../types.slint";
 import { AppCollection } from "../components/app-collection.slint";
+import { Button, ButtonSkin } from "../components/button.slint";
+import { TextField } from "../components/text-field.slint";
+import { WallpaperLabel } from "../components/wallpaper-label.slint";
 
-// Apps Menu: every launchable app.
+// Apps Menu: every launchable app (already filtered by the search, in Rust), over
+// the wallpaper.
 export component AppsMenuPage inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
     in property <length> top-inset: 0px;
-    // Home screen enabled (Settings > Launcher screens), so apps can be pinned to it.
+    in property <length> bottom-inset: 0px;
+    // Home screen enabled (Settings > Launcher screens): apps can be placed on it,
+    // and the Apps Menu closes back to it.
     in property <bool> home-enabled: false;
 
-    callback open-settings();
-    // Grid only: swipe down (with the grid scrolled to the top), the counterpart of
-    // Home's swipe up.
+    // Back to Home: swipe down with the apps scrolled to the top.
     callback close();
 
+    public function focus-search() {
+        search.focus-text();
+    }
+
+    // Closing distance of the swipe down; shorter swipes are ignored.
+    private property <length> close-distance: 48px;
+
     SwipeGestureHandler {
-        // Only at the top: anywhere else a downward drag scrolls the grid.
-        handle-swipe-down: root.home-enabled && root.view == AppsView.grid && collection.grid-at-top;
-        swiped => { root.close(); }
+        // Only at the top: anywhere else a downward drag scrolls the apps.
+        enabled: root.home-enabled && collection.at-top && !Interaction.item-lifted;
+        handle-swipe-down: true;
+        swiped => {
+            if self.current-position.y - self.pressed-position.y >= root.close-distance {
+                search.unfocus-text();
+                root.close();
+            }
+        }
 
         VerticalLayout {
-            padding-top: root.top-inset;
+            padding-top: root.top-inset + Tokens.spacing-xs;
+            padding-bottom: root.bottom-inset;
+            spacing: Tokens.spacing-xs;
 
             HorizontalLayout {
-                padding: Tokens.spacing-xs;
-                alignment: end;
+                padding-left: Tokens.spacing-m;
+                padding-right: Tokens.spacing-xs;
+                spacing: Tokens.spacing-xs;
+
+                search := TextField {
+                    placeholder: I18n.t("apps_menu.search");
+                    edited(text) => {
+                        LauncherActions.search(text);
+                        collection.scroll-to-top();
+                    }
+                    // Enter opens the first result.
+                    accepted => {
+                        if root.apps.length > 0 {
+                            AppActions.launch(root.apps[0]);
+                        }
+                    }
+                }
 
                 Button {
                     text: I18n.t("home.open_settings");
-                    clicked => { root.open-settings(); }
+                    skin: ButtonSkin.transparent;
+                    over-wallpaper: true;
+                    clicked => { LauncherActions.open-settings(); }
+                }
+            }
+
+            if root.apps.length == 0: VerticalLayout {
+                padding: Tokens.spacing-m;
+
+                WallpaperLabel {
+                    text: I18n.t("apps_menu.no_results");
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
                 }
             }
 

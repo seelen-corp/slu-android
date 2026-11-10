@@ -1,0 +1,73 @@
+import { Tokens } from "../tokens.slint";
+import { MenuSurface, MenuItem } from "menu.slint";
+
+// Standard select (`select[data-skin="default"]`): raised surface showing the
+// current option; tapping it opens the options in a standard popup.
+export component Select inherits Rectangle {
+    in property <[string]> options;
+    in property <int> current-index: 0;
+
+    callback selected(index: int);
+
+    min-height: 44px;
+    min-width: 120px;
+    horizontal-stretch: 0;
+    border-radius: Tokens.radius-s;
+    background: Tokens.slu-std-bg-light-color;
+    drop-shadow-offset-x: Tokens.shadow-s-offset;
+    drop-shadow-offset-y: Tokens.shadow-s-offset;
+    drop-shadow-blur: Tokens.shadow-s-blur;
+    drop-shadow-color: Tokens.shadow-s-color;
+
+    accessible-role: combobox;
+    accessible-value: root.options[root.current-index];
+    accessible-action-default => { popup.show(); }
+
+    HorizontalLayout {
+        padding-left: Tokens.spacing-s;
+        padding-right: Tokens.spacing-s;
+        spacing: Tokens.spacing-xs;
+
+        Text {
+            text: root.options[root.current-index];
+            font-size: 1rem;
+            color: touch.pressed ? Tokens.slu-std-ui-hover-color : Tokens.slu-std-fg-color;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        // Chevron: tells that it opens a list.
+        Path {
+            width: 10px;
+            height: 6px;
+            y: (parent.height - self.height) / 2;
+            commands: "M 0 0 L 5 5 L 10 0";
+            stroke: Tokens.slu-std-fg-secondary-color;
+            stroke-width: 1.5px;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + Tokens.spacing-2xs;
+        width: root.width;
+
+        MenuSurface {
+            width: root.width;
+
+            for option[index] in root.options: MenuItem {
+                text: option;
+                selected: index == root.current-index;
+                activated => {
+                    root.selected(index);
+                    popup.close();
+                }
+            }
+        }
+    }
+}

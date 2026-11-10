@@ -25,6 +25,12 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
+    <!--
+      Swipe down on Home opens the notification shade
+      (StatusBarManager.expandNotificationsPanel, see system-modules/system.rs).
+    -->
+    <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+
     <application
         android:label="Seelen UI Launcher"
         android:icon="@mipmap/ic_launcher">
@@ -38,11 +44,22 @@
           bar icon contrast, and BroadcastReceiver registration, which
           requires a real Java/Dalvik object).
         -->
+        <!--
+          Wallpaper theme: the system draws the wallpaper behind the window, and
+          HomeActivity makes its surface translucent so it shows through the
+          (transparent) Slint UI. singleTask: pressing Home while the launcher is
+          in front delivers onNewIntent instead of a new instance.
+        -->
         <activity
             android:name=".HomeActivity"
             android:exported="true"
             android:label="Seelen UI Launcher"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:theme="@android:style/Theme.DeviceDefault.Wallpaper.NoTitleBar"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:clearTaskOnLaunch="true"
+            android:windowSoftInputMode="adjustNothing"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode">
 
             <meta-data
                 android:name="android.app.lib_name"
@@ -82,7 +99,7 @@
             android:taskAffinity="com.seelen.slu_launcher.settings"
             android:exported="false"
             android:label="Settings"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:configChanges="orientation|keyboardHidden|screenSize|uiMode">
 
             <meta-data
                 android:name="android.app.lib_name"

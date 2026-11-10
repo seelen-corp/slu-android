@@ -1,30 +1,65 @@
 import { HomePage } from "pages/home.slint";
 import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
-import { AppItem, LauncherScreens, AppsView } from "types.slint";
+import { Tokens } from "tokens.slint";
+import { AppItem, HomeItem, LauncherScreens, AppsView } from "types.slint";
+import { LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
-export { AppActions } from "app-actions.slint";
-export { AppItem, LauncherScreens, AppsView }
+export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
+export { Tokens }
+export { AppItem, HomeItem, LauncherScreens, AppsView }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
-    // Every launchable app (Apps Menu).
+    // Launchable apps shown in the Apps Menu (filtered by its search).
     in property <[AppItem]> apps: [];
-    // Apps pinned to Home, in order.
-    in property <[AppItem]> home-apps: [];
+    // Home, grid view: apps in the pages and in the dock.
+    in property <[HomeItem]> home-items: [];
+    in property <[HomeItem]> dock-items: [];
+    in property <int> home-columns: 4;
+    in property <int> home-rows: 5;
+    in property <int> home-pages: 1;
+    // Home, list views: every Home app, in order.
+    in property <[AppItem]> home-list: [];
 
-    callback open-settings();
+    // The system wallpaper is drawn behind the window (wallpaper theme).
+    background: transparent;
 
     private property <bool> home-enabled: root.launcher-screens == LauncherScreens.home-and-apps-menu;
     // Only meaningful with Home enabled; without it the Apps Menu is the only screen.
     private property <bool> apps-menu-open: false;
+    private property <bool> focus-search-on-open: false;
 
     // Back to Home (e.g. when the launcher is resumed after opening an app).
     public function show-home() {
+        if root.apps-menu-open {
+            LauncherActions.search("");
+        }
         root.apps-menu-open = false;
+        home.cancel-drag();
         key-handler.focus();
+    }
+
+    // The Home button was pressed while the launcher was already in front: close
+    // the Apps Menu, or go back to the first page.
+    public function home-pressed() {
+        if root.apps-menu-open {
+            root.show-home();
+        } else {
+            home.go-to-first-page();
+        }
+    }
+
+    function open-apps-menu(focus-search: bool) {
+        LauncherActions.search("");
+        root.focus-search-on-open = focus-search;
+        root.apps-menu-open = true;
+        // Otherwise the Apps Menu focuses its search itself (`init`).
+        if !focus-search {
+            key-handler.focus();
+        }
     }
 
     forward-focus: key-handler;
@@ -41,23 +76,34 @@ export component MainWindow inherits Window {
             reject
         }
 
-        if !root.home-enabled || root.apps-menu-open: AppsMenuPage {
+        // Kept alive while the Apps Menu is open (keeps its page), but hidden.
+        home := HomePage {
+            visible: root.home-enabled && !root.apps-menu-open;
+            items: root.home-items;
+            dock-items: root.dock-items;
+            columns: root.home-columns;
+            rows: root.home-rows;
+            pages: root.home-pages;
+            list-items: root.home-list;
+            view: root.apps-view;
+            top-inset: root.safe-area-insets.top;
+            bottom-inset: root.safe-area-insets.bottom;
+            left-inset: root.safe-area-insets.left;
+            right-inset: root.safe-area-insets.right;
+            open-apps-menu(focus-search) => { root.open-apps-menu(focus-search); }
+        }
+
+        if !root.home-enabled || root.apps-menu-open: menu := AppsMenuPage {
             apps: root.apps;
             view: root.apps-view;
             home-enabled: root.home-enabled;
             top-inset: root.safe-area-insets.top;
-            open-settings => { root.open-settings(); }
+            bottom-inset: root.safe-area-insets.bottom;
             close => { root.show-home(); }
-        }
-
-        if root.home-enabled && !root.apps-menu-open: HomePage {
-            apps: root.home-apps;
-            view: root.apps-view;
-            top-inset: root.safe-area-insets.top;
-            open-settings => { root.open-settings(); }
-            open-apps-menu => {
-                root.apps-menu-open = true;
-                key-handler.focus();
+            init => {
+                if root.focus-search-on-open {
+                    self.focus-search();
+                }
             }
         }
     }
@@ -66,14 +112,28 @@ export component MainWindow inherits Window {
 export component SettingsWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
+    in property <int> home-columns: 4;
+    in property <int> home-rows: 5;
+
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
+    callback home-grid-changed(columns: int, rows: int);
+    callback open-wallpaper-picker();
+    callback open-default-launcher-settings();
+
+    background: Tokens.slu-std-bg-color;
 
     ConfigPage {
         top-inset: root.safe-area-insets.top;
+        bottom-inset: root.safe-area-insets.bottom;
         launcher-screens: root.launcher-screens;
         apps-view: root.apps-view;
+        home-columns: root.home-columns;
+        home-rows: root.home-rows;
         launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
         apps-view-changed(value) => { root.apps-view-changed(value); }
+        home-grid-changed(columns, rows) => { root.home-grid-changed(columns, rows); }
+        open-wallpaper-picker => { root.open-wallpaper-picker(); }
+        open-default-launcher-settings => { root.open-default-launcher-settings(); }
     }
 }

@@ -1,16 +1,21 @@
-import { ComboBox } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
 import { LauncherScreens, AppsView } from "../types.slint";
+import { Button, ButtonSkin } from "../components/button.slint";
+import { Select } from "../components/select.slint";
 
 // A setting: label on the left, its control (the child) on the right.
 component SettingRow inherits HorizontalLayout {
     in property <string> label;
+    in property <bool> enabled: true;
 
     spacing: Tokens.spacing-s;
 
     Text {
         text: root.label;
+        font-size: 1rem;
+        color: root.enabled ? Tokens.slu-std-fg-color : Tokens.slu-std-fg-disabled-color;
         vertical-alignment: center;
         horizontal-stretch: 1;
         wrap: word-wrap;
@@ -19,56 +24,129 @@ component SettingRow inherits HorizontalLayout {
     @children
 }
 
+// Section title.
+component SectionTitle inherits Text {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: Tokens.slu-std-fg-secondary-color;
+}
+
 export component ConfigPage inherits Rectangle {
     in property <length> top-inset: 0px;
+    in property <length> bottom-inset: 0px;
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
+    in property <int> home-columns: 4;
+    in property <int> home-rows: 5;
+
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
+    callback home-grid-changed(columns: int, rows: int);
+    callback open-wallpaper-picker();
+    callback open-default-launcher-settings();
 
-    VerticalLayout {
-        padding: Tokens.spacing-m;
-        padding-top: root.top-inset + Tokens.spacing-m;
-        spacing: Tokens.spacing-m;
-        alignment: start;
+    // Choices of the Home grid size (Settings > Home grid).
+    property <[int]> column-choices: [3, 4, 5, 6];
+    property <[int]> row-choices: [4, 5, 6, 7];
+    property <bool> home-enabled: root.launcher-screens == LauncherScreens.home-and-apps-menu;
+    property <bool> home-grid-enabled: root.home-enabled && root.apps-view == AppsView.grid;
 
-        Text {
-            text: I18n.t("settings.title");
-            font-size: 1.5rem;
-            font-weight: 600;
-        }
+    background: Tokens.slu-std-bg-color;
 
-        SettingRow {
-            label: I18n.t("settings.launcher_screens");
+    ScrollView {
+        mouse-drag-pan-enabled: true;
 
-            // Same order as the `LauncherScreens` enum.
-            ComboBox {
-                model: [
-                    I18n.t("settings.launcher_screens_apps_menu"),
-                    I18n.t("settings.launcher_screens_home_and_apps_menu"),
-                ];
-                current-index: root.launcher-screens == LauncherScreens.apps-menu ? 0 : 1;
-                selected => {
-                    root.launcher-screens-changed(
-                        self.current-index == 0 ? LauncherScreens.apps-menu : LauncherScreens.home-and-apps-menu);
+        VerticalLayout {
+            padding: Tokens.spacing-m;
+            padding-top: root.top-inset + Tokens.spacing-m;
+            padding-bottom: root.bottom-inset + Tokens.spacing-m;
+            spacing: Tokens.spacing-m;
+            alignment: start;
+
+            Text {
+                text: I18n.t("settings.title");
+                font-size: 1.5rem;
+                font-weight: 600;
+                color: Tokens.slu-std-fg-color;
+            }
+
+            SectionTitle {
+                text: I18n.t("settings.section_layout");
+            }
+
+            SettingRow {
+                label: I18n.t("settings.launcher_screens");
+
+                // Same order as the `LauncherScreens` enum.
+                Select {
+                    options: [
+                        I18n.t("settings.launcher_screens_apps_menu"),
+                        I18n.t("settings.launcher_screens_home_and_apps_menu"),
+                    ];
+                    current-index: root.launcher-screens == LauncherScreens.apps-menu ? 0 : 1;
+                    selected(index) => {
+                        root.launcher-screens-changed(index == 0 ? LauncherScreens.apps-menu : LauncherScreens.home-and-apps-menu);
+                    }
                 }
             }
-        }
 
-        SettingRow {
-            label: I18n.t("settings.apps_view");
+            SettingRow {
+                label: I18n.t("settings.apps_view");
 
-            // Same order as the `AppsView` enum.
-            ComboBox {
-                model: [
-                    I18n.t("settings.apps_view_list"),
-                    I18n.t("settings.apps_view_text_list"),
-                    I18n.t("settings.apps_view_grid"),
-                ];
-                current-index: root.apps-view == AppsView.list ? 0 : root.apps-view == AppsView.text-list ? 1 : 2;
-                selected => {
-                    root.apps-view-changed(
-                        self.current-index == 0 ? AppsView.list : self.current-index == 1 ? AppsView.text-list : AppsView.grid);
+                // Same order as the `AppsView` enum.
+                Select {
+                    options: [
+                        I18n.t("settings.apps_view_list"),
+                        I18n.t("settings.apps_view_text_list"),
+                        I18n.t("settings.apps_view_grid"),
+                    ];
+                    current-index: root.apps-view == AppsView.list ? 0 : root.apps-view == AppsView.text-list ? 1 : 2;
+                    selected(index) => {
+                        root.apps-view-changed(index == 0 ? AppsView.list : index == 1 ? AppsView.text-list : AppsView.grid);
+                    }
+                }
+            }
+
+            // Only used by Home in the grid view.
+            if root.home-grid-enabled: SettingRow {
+                label: I18n.t("settings.home_columns");
+
+                Select {
+                    options: ["3", "4", "5", "6"];
+                    current-index: Math.max(0, root.home-columns - 3);
+                    selected(index) => { root.home-grid-changed(root.column-choices[index], root.home-rows); }
+                }
+            }
+
+            if root.home-grid-enabled: SettingRow {
+                label: I18n.t("settings.home_rows");
+
+                Select {
+                    options: ["4", "5", "6", "7"];
+                    current-index: Math.max(0, root.home-rows - 4);
+                    selected(index) => { root.home-grid-changed(root.home-columns, root.row-choices[index]); }
+                }
+            }
+
+            SectionTitle {
+                text: I18n.t("settings.section_system");
+            }
+
+            SettingRow {
+                label: I18n.t("settings.wallpaper");
+
+                Button {
+                    text: I18n.t("settings.change");
+                    clicked => { root.open-wallpaper-picker(); }
+                }
+            }
+
+            SettingRow {
+                label: I18n.t("settings.default_launcher");
+
+                Button {
+                    text: I18n.t("settings.change");
+                    clicked => { root.open-default-launcher-settings(); }
                 }
             }
         }

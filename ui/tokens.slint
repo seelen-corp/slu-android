@@ -1,7 +1,13 @@
+import { Palette } from "std-widgets.slint";
+
 // Design tokens from the Seelen UI design manifesto (§3), with the same names and
-// values as the desktop CSS variables (`--spacing-*`, `--radius-*`).
-// TODO: color tokens (`fg-*`, `bg-*`, `ui-*` + overlays from the Android system accent).
+// values as the desktop CSS variables (`--spacing-*`, `--radius-*`, `--color-*`,
+// `--slu-std-*`, `--system-accent-*`, `--shadow-*`).
+//
+// This is the only place where color values are written. Components use the
+// semantic `slu-std-*` tokens first, the color scales otherwise.
 export global Tokens {
+    // --- Spacing (`--spacing-*`) ---
     out property <length> spacing-2xs: 4px;
     out property <length> spacing-xs: 8px;
     out property <length> spacing-s: 12px;
@@ -10,9 +16,86 @@ export global Tokens {
     out property <length> spacing-xl: 24px;
     out property <length> spacing-2xl: 32px;
 
+    // --- Radius (`--radius-*`) ---
     out property <length> radius-xs: 4px;
     out property <length> radius-s: 6px;
     out property <length> radius-m: 10px;
     out property <length> radius-l: 16px;
     out property <length> radius-full: 9999px;
+
+    // --- System accent (`--system-accent-*`) ---
+    // The user's Android system accent (Material You tones when available), set
+    // from Rust (`system-modules/theme.rs`). The defaults are only shown until then.
+    in property <color> system-accent-color: oklch(55%, 0.15, 250);
+    in property <color> system-accent-light-color: oklch(65%, 0.13, 250);
+    in property <color> system-accent-lighter-color: oklch(75%, 0.1, 250);
+    in property <color> system-accent-lightest-color: oklch(85%, 0.07, 250);
+    in property <color> system-accent-dark-color: oklch(45%, 0.15, 250);
+    in property <color> system-accent-darker-color: oklch(38%, 0.13, 250);
+    in property <color> system-accent-darkest-color: oklch(30%, 0.1, 250);
+
+    // --- Color scheme ---
+    // Follows the system scheme; tokens resolve per scheme here, components never
+    // branch on it.
+    property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    // --- Gray scale (`--color-gray-*`): step = contrast against the background ---
+    out property <color> color-gray-25: root.dark ? oklch(18%, 0, 0) : oklch(99%, 0, 0);
+    out property <color> color-gray-50: root.dark ? oklch(21%, 0, 0) : oklch(96%, 0, 0);
+    out property <color> color-gray-75: root.dark ? oklch(24%, 0, 0) : oklch(93%, 0, 0);
+    out property <color> color-gray-100: root.dark ? oklch(27%, 0, 0) : oklch(90%, 0, 0);
+    out property <color> color-gray-200: root.dark ? oklch(36%, 0, 0) : oklch(81%, 0, 0);
+    out property <color> color-gray-300: root.dark ? oklch(45%, 0, 0) : oklch(72%, 0, 0);
+    out property <color> color-gray-400: root.dark ? oklch(54%, 0, 0) : oklch(63%, 0, 0);
+    out property <color> color-gray-500: root.dark ? oklch(63%, 0, 0) : oklch(54%, 0, 0);
+    out property <color> color-gray-600: root.dark ? oklch(72%, 0, 0) : oklch(45%, 0, 0);
+    out property <color> color-gray-700: root.dark ? oklch(79%, 0, 0) : oklch(36%, 0, 0);
+    out property <color> color-gray-800: root.dark ? oklch(86%, 0, 0) : oklch(27%, 0, 0);
+    out property <color> color-gray-900: root.dark ? oklch(92%, 0, 0) : oklch(18%, 0, 0);
+
+    // Same in both schemes (`--color-fixed-gray-*`): only for content that must
+    // keep its color, e.g. text drawn over the wallpaper.
+    out property <color> color-fixed-gray-25: oklch(99%, 0, 0);
+    out property <color> color-fixed-gray-900: oklch(18%, 0, 0);
+
+    // --- Semantic tokens (`--slu-std-*`) ---
+    out property <color> slu-std-fg-color: root.color-gray-900;
+    out property <color> slu-std-fg-secondary-color: root.color-gray-700;
+    out property <color> slu-std-fg-muted-color: root.color-gray-500;
+    out property <color> slu-std-fg-disabled-color: root.color-gray-400;
+
+    out property <color> slu-std-bg-dark-color: root.dark ? root.color-gray-25 : root.color-gray-75;
+    out property <color> slu-std-bg-color: root.color-gray-50;
+    out property <color> slu-std-bg-light-color: root.dark ? root.color-gray-75 : root.color-gray-25;
+
+    out property <color> slu-std-ui-color: root.dark ? root.system-accent-light-color : root.system-accent-dark-color;
+    // Text/icons on top of `slu-std-ui-color` (inverse of the normal foreground).
+    out property <color> slu-std-ui-fg-color: root.color-gray-100;
+    out property <color> slu-std-ui-hover-color: root.dark ? root.system-accent-lighter-color : root.system-accent-darker-color;
+
+    out property <color> slu-std-ui-hover-overlay: root.system-accent-color.with-alpha(0.2);
+    out property <color> slu-std-ui-pressed-overlay: root.system-accent-color.with-alpha(0.3);
+    out property <color> slu-std-ui-selected-overlay: root.system-accent-color.with-alpha(0.1);
+
+    // --- Shadows (`--shadow-s/m/l`), split into Slint's drop-shadow properties ---
+    property <color> shadow-color: oklch(0%, 0, 0);
+    out property <length> shadow-s-offset: 1px;
+    out property <length> shadow-s-blur: 2px;
+    out property <color> shadow-s-color: root.shadow-color.with-alpha(0.08);
+    out property <length> shadow-m-offset: 2px;
+    out property <length> shadow-m-blur: 8px;
+    out property <color> shadow-m-color: root.shadow-color.with-alpha(0.16);
+    out property <length> shadow-l-offset: 8px;
+    out property <length> shadow-l-blur: 24px;
+    out property <color> shadow-l-color: root.shadow-color.with-alpha(0.24);
+
+    // --- Content over the wallpaper (Home and Apps Menu) ---
+    // Content-derived (manifesto §4): set from Rust with the wallpaper's own hint
+    // (`WallpaperColors`), so labels stay legible on light and dark wallpapers.
+    in property <bool> wallpaper-supports-dark-text: false;
+    out property <color> wallpaper-fg-color: root.wallpaper-supports-dark-text ? root.color-fixed-gray-900 : root.color-fixed-gray-25;
+    // UX exception "text-shadow: text drawn over dynamic images" (only behind light
+    // text, where the wallpaper can be anything but dark).
+    out property <bool> wallpaper-text-shadow: !root.wallpaper-supports-dark-text;
+    out property <color> wallpaper-text-shadow-color: root.shadow-color.with-alpha(0.5);
 }

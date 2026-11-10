@@ -4,8 +4,8 @@
 
 use std::sync::OnceLock;
 
-use jni::JavaVM;
 use jni::objects::{GlobalRef, JObject};
+use jni::{JNIEnv, JavaVM};
 use slint::android::AndroidApp;
 
 use crate::error::Result;
@@ -55,4 +55,26 @@ pub fn init(app: &AndroidApp) -> Result<()> {
 pub fn get() -> Result<&'static AndroidCtx> {
     CTX.get()
         .ok_or_else(|| "android_ctx::init must be called before use".into())
+}
+
+/// Runs `f` with a JNI env attached to the current thread and the Activity, in
+/// its own local frame. If it fails because Java threw (e.g.
+/// `ActivityNotFoundException`), the exception is cleared: a pending exception
+/// would make every later JNI call on this thread fail.
+pub fn with_activity<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> Result<T>) -> Result<T> {
+    let ctx = get()?;
+    let mut env = ctx.vm.attach_current_thread()?;
+    let result = env.with_local_frame(32, |env| f(env, ctx.activity.as_obj()));
+    if result.is_err() && env.exception_check()? {
+        env.exception_describe()?;
+        env.exception_clear()?;
+    }
+    result
+}
+
+/// `android.os.Build.VERSION.SDK_INT`.
+pub fn sdk_int(env: &mut JNIEnv) -> Result<i32> {
+    Ok(env
+        .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
+        .i()?)
 }

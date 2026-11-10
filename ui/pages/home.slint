@@ -1,60 +1,639 @@
-import { Button } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { AppItem, AppsView } from "../types.slint";
-import { AppCollection } from "../components/app-collection.slint";
+import { AppActions, HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
+import { AppItem, AppsView, HomeItem } from "../types.slint";
+import { AppGridItem, GridMetrics } from "../components/app-grid.slint";
+import { AppListItem } from "../components/app-list-item.slint";
+import { Button, ButtonSkin } from "../components/button.slint";
+import { MenuSurface, MenuItem } from "../components/menu.slint";
+import { TextField } from "../components/text-field.slint";
+import { WallpaperLabel } from "../components/wallpaper-label.slint";
 
-// Home: only the apps pinned by the user.
-export component HomePage inherits Rectangle {
-    in property <[AppItem]> apps: [];
-    in property <AppsView> view: AppsView.list;
-    in property <length> top-inset: 0px;
+// Long press on an empty part of Home (opens the Home menu).
+component EmptySpaceTouch inherits TouchArea {
+    // Window coordinates.
+    callback long-pressed(x: length, y: length);
 
-    callback open-settings();
-    callback open-apps-menu();
+    private property <bool> moved-away: false;
+    private property <bool> fired: false;
 
-    // Grid opens the Apps Menu with a swipe up; the list views with a button.
-    property <bool> grid: root.view == AppsView.grid;
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down {
+            self.moved-away = false;
+            self.fired = false;
+        }
+    }
+    moved => {
+        if abs(self.mouse-x - self.pressed-x) > 8px || abs(self.mouse-y - self.pressed-y) > 8px {
+            self.moved-away = true;
+        }
+    }
 
-    SwipeGestureHandler {
-        handle-swipe-up: root.grid;
-        swiped => { root.open-apps-menu(); }
+    Timer {
+        interval: 500ms;
+        running: root.pressed && !root.moved-away && !root.fired;
+        triggered => {
+            root.fired = true;
+            LauncherActions.haptic();
+            root.long-pressed(root.absolute-position.x + root.pressed-x, root.absolute-position.y + root.pressed-y);
+        }
+    }
+}
 
-        VerticalLayout {
-            padding-top: root.top-inset;
+// Search field on Home: looks like the standard text field; tapping it opens
+// the Apps Menu with its search focused.
+component HomeSearchBar inherits Rectangle {
+    callback activated();
 
-            HorizontalLayout {
-                padding: Tokens.spacing-xs;
-                spacing: Tokens.spacing-xs;
-                alignment: end;
+    min-height: field.min-height;
 
-                if !root.grid: Button {
-                    text: I18n.t("home.all_apps");
-                    clicked => { root.open-apps-menu(); }
-                }
+    field := TextField {
+        width: 100%;
+        height: 100%;
+        placeholder: I18n.t("apps_menu.search");
+    }
 
-                Button {
-                    text: I18n.t("home.open_settings");
-                    clicked => { root.open-settings(); }
-                }
+    // Over the field: it never gets the focus here (no keyboard on Home).
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// Drop target shown while dragging an app (e.g. "Remove"). Raised surface; the
+// accent fill tells that the app is over it ("single highlighted item").
+component DropTarget inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+
+    min-height: 44px;
+    horizontal-stretch: 1;
+    border-radius: Tokens.radius-s;
+    background: root.active ? Tokens.slu-std-ui-color : Tokens.slu-std-bg-light-color;
+    drop-shadow-offset-x: Tokens.shadow-s-offset;
+    drop-shadow-offset-y: Tokens.shadow-s-offset;
+    drop-shadow-blur: Tokens.shadow-s-blur;
+    drop-shadow-color: Tokens.shadow-s-color;
+
+    Text {
+        text: root.text;
+        font-size: 1rem;
+        font-weight: 500;
+        color: root.active ? Tokens.slu-std-ui-fg-color : Tokens.slu-std-fg-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// Highlight of the cell/row an app would be dropped on (drop target outline).
+component DropHighlight inherits Rectangle {
+    border-radius: Tokens.radius-s;
+    background: Tokens.slu-std-ui-selected-overlay;
+    border-width: 2px;
+    border-color: Tokens.system-accent-color;
+}
+
+// Page indicator: the current page is the wide dot.
+component PageDots inherits Rectangle {
+    in property <int> count: 1;
+    in property <int> current: 0;
+
+    property <length> dot: 6px;
+    property <length> current-width: 16px;
+    property <length> total-width: Math.max(0, root.count - 1) * (root.dot + Tokens.spacing-xs) + root.current-width;
+
+    for index in root.count: Rectangle {
+        x: (root.width - root.total-width) / 2 + index * (root.dot + Tokens.spacing-xs) + (index > root.current ? root.current-width - root.dot : 0);
+        y: (root.height - root.dot) / 2;
+        width: index == root.current ? root.current-width : root.dot;
+        height: root.dot;
+        border-radius: root.dot / 2;
+        background: Tokens.wallpaper-fg-color;
+    }
+}
+
+// Shared drag state of Home, in window coordinates. Bound two-way by the grid
+// and list layouts.
+component HomeLayoutBase inherits Rectangle {
+    in-out property <bool> dragging: false;
+    in-out property <AppItem> drag-app;
+    in-out property <length> drag-x;
+    in-out property <length> drag-y;
+    // The dragged app is over the top bar's drop targets.
+    in property <bool> over-remove: false;
+    in property <bool> over-uninstall: false;
+    in property <bool> over-top-bar: false;
+
+    callback empty-long-pressed(x: length, y: length);
+
+    protected pure function is-dragged(app: AppItem) -> bool {
+        return root.dragging && app.package-name == root.drag-app.package-name && app.activity-name == root.drag-app.activity-name;
+    }
+
+    protected function start-drag(app: AppItem, x: length, y: length) {
+        root.drag-app = app;
+        root.drag-x = x;
+        root.drag-y = y;
+        root.dragging = true;
+    }
+
+    // Handles the top bar's drop targets; true if the drop was handled.
+    protected function drop-on-top-bar() -> bool {
+        if root.over-remove {
+            AppActions.remove-from-home(root.drag-app);
+            return true;
+        }
+        if root.over-uninstall {
+            AppActions.uninstall(root.drag-app);
+            return true;
+        }
+        return root.over-top-bar;
+    }
+}
+
+// Grid view: pages of cells (swiped horizontally) and the dock below them.
+component HomeGrid inherits HomeLayoutBase {
+    in property <[HomeItem]> items: [];
+    in property <[HomeItem]> dock-items: [];
+    in property <int> columns: 4;
+    in property <int> rows: 5;
+    in property <int> page-count: 1;
+    in-out property <int> current-page: 0;
+    // Horizontal offset of the pages while the finger swipes them.
+    in property <length> swipe-offset: 0;
+    in property <bool> swiping: false;
+
+    property <length> cell-width: pages-area.width / root.columns;
+    property <length> cell-height: pages-area.height / root.rows;
+    property <length> dock-cell-width: dock-area.width / root.columns;
+    property <length> pages-x: pages-area.absolute-position.x;
+    property <length> pages-y: pages-area.absolute-position.y;
+    property <bool> over-dock: root.dragging && root.drag-y >= dock-area.absolute-position.y;
+    property <bool> over-grid: root.dragging && !root.over-top-bar && !root.over-dock;
+    property <int> target-col: clamp(floor((root.drag-x - root.pages-x) / root.cell-width), 0, root.columns - 1);
+    property <int> target-row: clamp(floor((root.drag-y - root.pages-y) / root.cell-height), 0, root.rows - 1);
+    property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x) / root.dock-cell-width), 0, root.columns - 1);
+    // Dragging an app to a side edge flips the page.
+    property <length> edge-zone: 24px;
+    property <bool> at-left-edge: root.drag-x < root.pages-x + root.edge-zone;
+    property <bool> at-right-edge: root.drag-x > root.pages-x + pages-area.width - root.edge-zone;
+
+    function end-drag(x: length, y: length) {
+        root.drag-x = x;
+        root.drag-y = y;
+        if !root.drop-on-top-bar() {
+            if root.over-dock {
+                HomeActions.move-to(root.drag-app, true, 0, root.target-slot, 0);
+            } else {
+                HomeActions.move-to(root.drag-app, false, root.current-page, root.target-col, root.target-row);
             }
+        }
+        root.dragging = false;
+    }
 
-            if root.apps.length == 0: VerticalLayout {
-                padding: Tokens.spacing-m;
+    EmptySpaceTouch {
+        long-pressed(x, y) => { root.empty-long-pressed(x, y); }
+    }
 
-                Text {
-                    text: root.grid ? I18n.t("home.empty_grid") : I18n.t("home.empty");
-                    wrap: word-wrap;
+    Timer {
+        interval: 700ms;
+        running: root.over-grid && (root.at-left-edge || root.at-right-edge);
+        triggered => {
+            if root.at-left-edge && root.current-page > 0 {
+                root.current-page -= 1;
+            } else if root.at-right-edge && root.current-page < root.page-count - 1 {
+                root.current-page += 1;
+            }
+        }
+    }
+
+    VerticalLayout {
+        pages-area := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            if root.items.length == 0 && root.dock-items.length == 0 && !root.dragging: VerticalLayout {
+                padding: Tokens.spacing-xl;
+                alignment: center;
+
+                WallpaperLabel {
+                    text: I18n.t("home.empty");
                     horizontal-alignment: center;
+                    wrap: word-wrap;
                 }
             }
 
-            AppCollection {
-                apps: root.apps;
-                view: root.view;
+            if root.over-grid: DropHighlight {
+                x: root.target-col * root.cell-width;
+                y: root.target-row * root.cell-height;
+                width: root.cell-width;
+                height: root.cell-height;
+            }
+
+            Rectangle {
+                x: -root.current-page * pages-area.width + root.swipe-offset;
+                width: pages-area.width * root.page-count;
+                height: pages-area.height;
+                // Page change (control state change); none while following the finger.
+                animate x {
+                    duration: root.swiping ? 0ms : 200ms;
+                    easing: ease-out;
+                }
+
+                for item in root.items: AppGridItem {
+                    x: item.page * pages-area.width + item.col * root.cell-width;
+                    y: item.row * root.cell-height;
+                    width: root.cell-width;
+                    height: root.cell-height;
+                    app: item.app;
+                    on-home: true;
+                    home-enabled: true;
+                    draggable: true;
+                    content-hidden: root.is-dragged(item.app);
+                    drag-started(x, y) => { root.start-drag(item.app, x, y); }
+                    drag-moved(x, y) => {
+                        root.drag-x = x;
+                        root.drag-y = y;
+                    }
+                    drag-ended(x, y) => { root.end-drag(x, y); }
+                }
+            }
+        }
+
+        PageDots {
+            height: 24px;
+            count: root.page-count;
+            current: root.current-page;
+            visible: root.page-count > 1;
+        }
+
+        dock-area := Rectangle {
+            height: GridMetrics.icon-size + 4 * Tokens.spacing-2xs + Tokens.spacing-xs;
+
+            if root.over-dock: DropHighlight {
+                x: root.target-slot * root.dock-cell-width;
+                width: root.dock-cell-width;
+                height: dock-area.height;
+            }
+
+            for item in root.dock-items: AppGridItem {
+                x: item.col * root.dock-cell-width;
+                width: root.dock-cell-width;
+                height: dock-area.height;
+                app: item.app;
+                show-label: false;
                 on-home: true;
                 home-enabled: true;
-                grid-scrollable: false;
+                draggable: true;
+                content-hidden: root.is-dragged(item.app);
+                drag-started(x, y) => { root.start-drag(item.app, x, y); }
+                drag-moved(x, y) => {
+                    root.drag-x = x;
+                    root.drag-y = y;
+                }
+                drag-ended(x, y) => { root.end-drag(x, y); }
+            }
+        }
+    }
+}
+
+// List views: every Home app in one scrollable list, reordered by dragging.
+// Swipe up (when the list doesn't scroll) opens the Apps Menu, swipe down (at the
+// top) the notifications.
+component HomeList inherits HomeLayoutBase {
+    in property <[AppItem]> apps: [];
+    in property <bool> show-icon: true;
+    in property <length> swipe-distance: 48px;
+
+    callback open-apps-menu();
+
+    property <length> row-height: root.show-icon ? 64px : 48px;
+    property <bool> over-list: root.dragging && !root.over-top-bar;
+    property <int> target-index: clamp(floor((root.drag-y - scroll.absolute-position.y - scroll.viewport-y) / root.row-height), 0, root.apps.length - 1);
+
+    function end-drag(x: length, y: length) {
+        root.drag-x = x;
+        root.drag-y = y;
+        if !root.drop-on-top-bar() {
+            HomeActions.move-to-index(root.drag-app, root.target-index);
+        }
+        root.dragging = false;
+    }
+
+    SwipeGestureHandler {
+        enabled: !Interaction.item-lifted && !root.dragging;
+        handle-swipe-up: scroll.viewport-height <= scroll.visible-height;
+        handle-swipe-down: scroll.viewport-y >= 0;
+        swiped => {
+            let dy = self.current-position.y - self.pressed-position.y;
+            if dy <= -root.swipe-distance {
+                root.open-apps-menu();
+            } else if dy >= root.swipe-distance {
+                LauncherActions.expand-notifications();
+            }
+        }
+
+        VerticalLayout {
+            scroll := ScrollView {
+                mouse-drag-pan-enabled: true;
+                viewport-height: Math.max(root.apps.length * root.row-height, self.visible-height);
+
+                EmptySpaceTouch {
+                    width: scroll.visible-width;
+                    height: scroll.viewport-height;
+                    long-pressed(x, y) => { root.empty-long-pressed(x, y); }
+                }
+
+                if root.apps.length == 0: VerticalLayout {
+                    width: scroll.visible-width;
+                    height: scroll.visible-height;
+                    padding: Tokens.spacing-xl;
+                    alignment: center;
+
+                    WallpaperLabel {
+                        text: I18n.t("home.empty_list");
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.over-list: DropHighlight {
+                    y: root.target-index * root.row-height;
+                    width: scroll.visible-width;
+                    height: root.row-height;
+                }
+
+                for app[index] in root.apps: AppListItem {
+                    y: index * root.row-height;
+                    width: scroll.visible-width;
+                    height: root.row-height;
+                    app: app;
+                    show-icon: root.show-icon;
+                    on-home: true;
+                    home-enabled: true;
+                    draggable: true;
+                    content-hidden: root.is-dragged(app);
+                    drag-started(x, y) => { root.start-drag(app, x, y); }
+                    drag-moved(x, y) => {
+                        root.drag-x = x;
+                        root.drag-y = y;
+                    }
+                    drag-ended(x, y) => { root.end-drag(x, y); }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                padding: Tokens.spacing-xs;
+
+                Button {
+                    text: I18n.t("home.all_apps");
+                    skin: ButtonSkin.transparent;
+                    over-wallpaper: true;
+                    clicked => { root.open-apps-menu(); }
+                }
+            }
+        }
+    }
+}
+
+// Home: the apps placed by the user, over the wallpaper. Grid view: pages + dock,
+// swipe left/right between pages, up for the Apps Menu, down for notifications.
+// List views: one list. Long press an app to move it (drag) or open its menu;
+// long press an empty space for the Home menu.
+export component HomePage inherits Rectangle {
+    // Grid view.
+    in property <[HomeItem]> items: [];
+    in property <[HomeItem]> dock-items: [];
+    in property <int> columns: 4;
+    in property <int> rows: 5;
+    in property <int> pages: 1;
+    // List views: every Home app, in order.
+    in property <[AppItem]> list-items: [];
+    in property <AppsView> view: AppsView.grid;
+    in property <length> top-inset: 0px;
+    in property <length> bottom-inset: 0px;
+    in property <length> left-inset: 0px;
+    in property <length> right-inset: 0px;
+    in-out property <int> current-page: 0;
+
+    callback open-apps-menu(focus-search: bool);
+
+    // Abort a drag in progress (e.g. the launcher went to the background).
+    public function cancel-drag() {
+        root.dragging = false;
+        Interaction.item-lifted = false;
+        root.clamp-page();
+    }
+
+    public function go-to-first-page() {
+        root.current-page = 0;
+    }
+
+    property <bool> grid: root.view == AppsView.grid;
+    property <bool> dragging: false;
+    property <AppItem> drag-app;
+    property <length> drag-x;
+    property <length> drag-y;
+    // While dragging there's one more (empty) page, to move an app to a new page.
+    property <int> page-count: root.dragging ? root.pages + 1 : root.pages;
+    property <bool> over-top-bar: root.dragging && root.drag-y < top-bar.absolute-position.y + top-bar.height;
+    property <bool> over-remove: root.over-top-bar && (!root.drag-app.uninstallable || root.drag-x < top-bar.absolute-position.x + top-bar.width / 2);
+    property <bool> over-uninstall: root.over-top-bar && root.drag-app.uninstallable && !root.over-remove;
+
+    property <length> swipe-offset: 0;
+    // Axis of the current swipe: 0 none yet, 1 horizontal, 2 vertical.
+    property <int> swipe-axis: 0;
+    // Minimum vertical swipe to open the Apps Menu / notifications.
+    property <length> swipe-distance: 48px;
+
+    property <length> menu-x;
+    property <length> menu-y;
+
+    function clamp-page() {
+        if root.current-page >= root.page-count {
+            root.current-page = Math.max(0, root.page-count - 1);
+        }
+    }
+
+    function show-menu(x: length, y: length) {
+        root.menu-x = x - root.absolute-position.x;
+        root.menu-y = y - root.absolute-position.y;
+        home-menu.show();
+    }
+
+    changed pages => { root.clamp-page(); }
+    changed dragging => {
+        if !root.dragging {
+            root.clamp-page();
+        }
+    }
+
+    swipe := SwipeGestureHandler {
+        // Grid view only (HomeList has its own). An app being pressed/dragged owns
+        // the touch.
+        enabled: root.grid && !Interaction.item-lifted && !root.dragging;
+        handle-swipe-left: true;
+        handle-swipe-right: true;
+        handle-swipe-up: true;
+        handle-swipe-down: true;
+
+        property <length> dx: self.current-position.x - self.pressed-position.x;
+        property <length> dy: self.current-position.y - self.pressed-position.y;
+
+        moved => {
+            if !self.swiping {
+                return;
+            }
+            if root.swipe-axis == 0 {
+                root.swipe-axis = abs(self.dx) > abs(self.dy) ? 1 : 2;
+            }
+            if root.swipe-axis == 1 {
+                // Resistance past the first/last page.
+                let past-edge = (self.dx > 0 && root.current-page == 0) || (self.dx < 0 && root.current-page >= root.page-count - 1);
+                root.swipe-offset = past-edge ? self.dx / 4 : self.dx;
+            }
+        }
+        swiped => {
+            if root.swipe-axis == 1 {
+                if self.dx < -root.width / 5 && root.current-page < root.page-count - 1 {
+                    root.current-page += 1;
+                } else if self.dx > root.width / 5 && root.current-page > 0 {
+                    root.current-page -= 1;
+                }
+            } else if root.swipe-axis == 2 {
+                if self.dy <= -root.swipe-distance {
+                    root.open-apps-menu(false);
+                } else if self.dy >= root.swipe-distance {
+                    LauncherActions.expand-notifications();
+                }
+            }
+            root.swipe-offset = 0;
+            root.swipe-axis = 0;
+        }
+        cancelled => {
+            root.swipe-offset = 0;
+            root.swipe-axis = 0;
+        }
+
+        VerticalLayout {
+            padding-top: root.top-inset + Tokens.spacing-xs;
+            padding-bottom: root.bottom-inset;
+            padding-left: root.left-inset;
+            padding-right: root.right-inset;
+            spacing: Tokens.spacing-xs;
+
+            top-bar := Rectangle {
+                height: 44px;
+
+                HorizontalLayout {
+                    padding-left: Tokens.spacing-m;
+                    padding-right: Tokens.spacing-m;
+                    spacing: Tokens.spacing-xs;
+
+                    if !root.dragging: HomeSearchBar {
+                        horizontal-stretch: 1;
+                        activated => { root.open-apps-menu(true); }
+                    }
+                    if root.dragging: DropTarget {
+                        text: I18n.t("app_actions.remove_from_home");
+                        active: root.over-remove;
+                    }
+                    if root.dragging && root.drag-app.uninstallable: DropTarget {
+                        text: I18n.t("app_actions.uninstall");
+                        active: root.over-uninstall;
+                    }
+                }
+            }
+
+            if root.grid: HomeGrid {
+                vertical-stretch: 1;
+                items: root.items;
+                dock-items: root.dock-items;
+                columns: root.columns;
+                rows: root.rows;
+                page-count: root.page-count;
+                current-page <=> root.current-page;
+                swipe-offset: root.swipe-offset;
+                swiping: swipe.swiping;
+                dragging <=> root.dragging;
+                drag-app <=> root.drag-app;
+                drag-x <=> root.drag-x;
+                drag-y <=> root.drag-y;
+                over-top-bar: root.over-top-bar;
+                over-remove: root.over-remove;
+                over-uninstall: root.over-uninstall;
+                empty-long-pressed(x, y) => { root.show-menu(x, y); }
+            }
+
+            if !root.grid: HomeList {
+                vertical-stretch: 1;
+                apps: root.list-items;
+                swipe-distance: root.swipe-distance;
+                show-icon: root.view == AppsView.list;
+                dragging <=> root.dragging;
+                drag-app <=> root.drag-app;
+                drag-x <=> root.drag-x;
+                drag-y <=> root.drag-y;
+                over-top-bar: root.over-top-bar;
+                over-remove: root.over-remove;
+                over-uninstall: root.over-uninstall;
+                empty-long-pressed(x, y) => { root.show-menu(x, y); }
+                open-apps-menu => { root.open-apps-menu(false); }
+            }
+        }
+    }
+
+    // The app being dragged, under the finger.
+    if root.dragging: Rectangle {
+        width: 96px;
+        height: 96px;
+        x: root.drag-x - root.absolute-position.x - self.width / 2;
+        y: root.drag-y - root.absolute-position.y - self.height / 2;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Tokens.spacing-2xs;
+
+            HorizontalLayout {
+                alignment: center;
+
+                Image {
+                    source: root.drag-app.icon;
+                    width: GridMetrics.icon-size;
+                    height: GridMetrics.icon-size;
+                }
+            }
+
+            WallpaperLabel {
+                text: root.drag-app.title;
+                font-size: GridMetrics.label-font-size;
+                horizontal-alignment: center;
+            }
+        }
+    }
+
+    home-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+
+        MenuSurface {
+            min-width: 200px;
+
+            MenuItem {
+                text: I18n.t("home.wallpaper");
+                activated => {
+                    LauncherActions.open-wallpaper-picker();
+                    home-menu.close();
+                }
+            }
+            MenuItem {
+                text: I18n.t("home.open_settings");
+                activated => {
+                    LauncherActions.open-settings();
+                    home-menu.close();
+                }
             }
         }
     }

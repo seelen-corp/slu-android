@@ -1,32 +1,53 @@
 import { Tokens } from "../tokens.slint";
 import { AppItem } from "../types.slint";
 import { AppItemBase } from "app-item-base.slint";
+import { WallpaperLabel } from "wallpaper-label.slint";
 
-// Grid cell: icon with the title below.
-component AppGridItem inherits AppItemBase {
-    in property <length> icon-size;
-    in property <length> label-font-size;
+// Same size Rust renders the icons at (`ICON_SIZE` in lib.rs).
+export global GridMetrics {
+    out property <length> icon-size: 48px;
+    out property <relative-font-size> label-font-size: 0.875rem;
+    // Minimum cell width of the Apps Menu grid; the free space is spread among
+    // the columns.
+    out property <length> min-cell-width: 80px;
+}
+
+// Icon with the title below, centered in its cell. Drawn over the wallpaper.
+export component AppGridItem inherits AppItemBase {
+    // Hides the visuals but keeps the touch alive (the app is being dragged).
+    in property <bool> content-hidden: false;
+    in property <bool> show-label: true;
 
     VerticalLayout {
-        padding: Tokens.spacing-xs;
-        spacing: Tokens.spacing-2xs;
-        alignment: start;
+        padding: Tokens.spacing-2xs;
+        alignment: center;
 
-        HorizontalLayout {
-            alignment: center;
+        Rectangle {
+            border-radius: Tokens.radius-s;
+            background: root.pressed ? Tokens.slu-std-ui-pressed-overlay : transparent;
+            visible: !root.content-hidden;
 
-            Image {
-                source: root.app.icon;
-                width: root.icon-size;
-                height: root.icon-size;
+            VerticalLayout {
+                padding: Tokens.spacing-2xs;
+                spacing: Tokens.spacing-2xs;
+                alignment: center;
+
+                HorizontalLayout {
+                    alignment: center;
+
+                    Image {
+                        source: root.app.icon;
+                        width: GridMetrics.icon-size;
+                        height: GridMetrics.icon-size;
+                    }
+                }
+
+                if root.show-label: WallpaperLabel {
+                    text: root.app.title;
+                    font-size: GridMetrics.label-font-size;
+                    horizontal-alignment: center;
+                }
             }
-        }
-
-        Text {
-            text: root.app.title;
-            font-size: root.label-font-size;
-            horizontal-alignment: center;
-            overflow: elide;
         }
     }
 }
@@ -35,25 +56,20 @@ component AppGridItem inherits AppItemBase {
 // preferred height is the height of all its rows (it doesn't scroll by itself).
 export component AppGrid inherits Rectangle {
     in property <[AppItem]> apps: [];
-    in property <bool> on-home: false;
     in property <bool> home-enabled: false;
 
-    // Same size Rust renders the icons at (`ICON_SIZE` in lib.rs).
-    property <length> icon-size: 48px;
-    property <length> label-font-size: 0.875rem;
-    // Minimum cell width; the free space is spread among the columns.
-    property <length> min-cell-width: 80px;
-    property <int> columns: Math.max(1, Math.floor(self.width / self.min-cell-width));
+    property <int> columns: Math.max(1, Math.floor(self.width / GridMetrics.min-cell-width));
     property <length> cell-width: self.width / self.columns;
-    property <length> cell-height: self.icon-size + 2 * Tokens.spacing-xs + Tokens.spacing-2xs + label-metrics.preferred-height;
+    property <length> cell-height: GridMetrics.icon-size + 4 * Tokens.spacing-2xs + Tokens.spacing-2xs + label-metrics.preferred-height + Tokens.spacing-xs;
 
     preferred-height: Math.ceil(self.apps.length / self.columns) * self.cell-height;
 
     // Only measures the height of one label line.
     label-metrics := Text {
         text: "Ag";
-        font-size: root.label-font-size;
+        font-size: GridMetrics.label-font-size;
         visible: false;
+        accessible-role: none;
     }
 
     for app[index] in root.apps: AppGridItem {
@@ -61,10 +77,7 @@ export component AppGrid inherits Rectangle {
         y: Math.floor(index / root.columns) * root.cell-height;
         width: root.cell-width;
         height: root.cell-height;
-        icon-size: root.icon-size;
-        label-font-size: root.label-font-size;
         app: app;
-        on-home: root.on-home;
         home-enabled: root.home-enabled;
     }
 }
