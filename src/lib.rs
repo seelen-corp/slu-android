@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use error::Result;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
-use system_modules::{activity, android_ctx, apps, config, icons, locale, system, theme};
+use system_modules::{activity, android_ctx, apps, config, icons, images, locale, system, theme};
 
 slint::include_modules!();
 
@@ -145,6 +145,8 @@ impl HomeItem {
     fn key(&self) -> EntryKey {
         if self.is_folder {
             EntryKey::Folder(to_index(self.folder.id))
+        } else if self.is_picture {
+            EntryKey::Image(to_index(self.picture.id))
         } else {
             EntryKey::App(self.app.app_ref())
         }
@@ -193,6 +195,29 @@ thread_local! {
     static OPEN_FOLDER: Cell<Option<u32>> = const { Cell::new(None) };
     /// The icon shape alone (`AppsLayout.icon-shape`), by size and style.
     static ICON_SHAPE: RefCell<Option<(u32, config::IconStyle, slint::Image)>> = const { RefCell::new(None) };
+    /// Decoded images of the pictures on Home, by file name.
+    static PICTURES: RefCell<HashMap<String, slint::Image>> = Default::default();
+    /// The config shown by the last `refresh`, for the checks the UI makes while
+    /// dragging (`HomeActions.can-move`, `can-resize-picture`).
+    static SHOWN_CONFIG: RefCell<config::Config> = RefCell::new(config::Config::default());
+    /// Grid cell where the image being picked goes (`HomeActions.add-picture`).
+    static PICTURE_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
+}
+
+fn picture_image(file: &str) -> slint::Image {
+    if let Some(image) = PICTURES.with_borrow(|pictures| pictures.get(file).cloned()) {
+        return image;
+    }
+    match images::load(file) {
+        Ok(image) => {
+            PICTURES.with_borrow_mut(|pictures| pictures.insert(file.to_owned(), image.clone()));
+            image
+        }
+        Err(err) => {
+            log::error!("failed to load a picture: {err}");
+            slint::Image::default()
+        }
+    }
 }
 
 /// The icon shape at `size` physical pixels, for the folders.
@@ -318,7 +343,14 @@ fn apply_wallpaper(tokens: Tokens<'_>) {
         false
     });
     tokens.set_wallpaper_supports_dark_text(dark_text);
-    log_error("set system bars", system::set_light_system_bars(dark_text));
+    apply_system_bars(tokens);
+}
+
+/// System bar icons: dark over a light wallpaper, unless it's behind the scrim
+/// (`Tokens.wallpaper-dimmed`).
+fn apply_system_bars(tokens: Tokens<'_>) {
+    let dark_icons = tokens.get_wallpaper_supports_dark_text() && !tokens.get_wallpaper_dimmed();
+    log_error("set system bars", system::set_light_system_bars(dark_icons));
 }
 
 fn to_index(value: i32) -> u32 {
@@ -378,60 +410,87 @@ fn refresh(window: &MainWindow) -> Result<()> {
     // back if the app is reinstalled (or mid-update, when it's briefly gone).
     // Folders show their installed apps; with none, they're skipped too.
     let home_item = |entry: &config::HomeEntry| -> Option<HomeItem> {
-        let (is_folder, app, folder) = match &entry.content {
-            HomeContent::App(app) => (false, find(app)?, FolderItem::default()),
+        let mut item = HomeItem::default();
+        match &entry.content {
+            HomeContent::App(app) => item.app = find(app)?,
             HomeContent::Folder(folder) => {
                 let apps: Vec<AppItem> = folder.apps.iter().filter_map(&find).collect();
                 if apps.is_empty() {
                     return None;
                 }
-                let folder = FolderItem {
+                item.is_folder = true;
+                item.folder = FolderItem {
                     id: folder.id as i32,
                     title: folder.title.as_str().into(),
                     apps: ModelRc::new(VecModel::from(apps)),
                 };
-                (true, AppItem::default(), folder)
             }
-        };
+            HomeContent::Image(image) => {
+                item.is_picture = true;
+                item.picture = PictureItem {
+                    id: image.id as i32,
+                    source: picture_image(&image.file),
+                    columns: image.columns as i32,
+                    rows: image.rows as i32,
+                };
+            }
+        }
         let (dock, page, col, row) = match entry.slot {
             Slot::Grid { page, row, col } => (false, page, col, row),
             Slot::Dock { col } => (true, 0, col, 0),
         };
         Some(HomeItem {
-            is_folder,
-            app,
-            folder,
             dock,
             page: page as i32,
             col: col as i32,
             row: row as i32,
+            ..item
         })
     };
     let (rows, columns) = (config.home_rows as usize, config.home_columns as usize);
-    let mut home_cells = vec![false; config.home_pages() as usize * rows * columns];
+    // 0 free, 1 app or folder, 2 picture (`HomeGrid.home-cells`).
+    let mut home_cells = vec![0; config.home_pages() as usize * rows * columns];
     let mut dock_cells = vec![false; columns];
     let mut home_items = Vec::new();
+    let mut home_pictures = Vec::new();
     let mut dock_items = Vec::new();
     for entry in &config.home {
         let Some(item) = home_item(entry) else {
             continue;
         };
-        let (page, row, col) = (item.page as usize, item.row as usize, item.col as usize);
         if item.dock {
-            if let Some(cell) = dock_cells.get_mut(col) {
+            if let Some(cell) = dock_cells.get_mut(item.col as usize) {
                 *cell = true;
             }
             dock_items.push(item);
-        } else {
-            if row < rows
-                && col < columns
-                && let Some(cell) = home_cells.get_mut((page * rows + row) * columns + col)
-            {
-                *cell = true;
+            continue;
+        }
+        let kind = if item.is_picture { 2 } else { 1 };
+        for cell in entry.cells() {
+            if let Slot::Grid { page, row, col } = cell {
+                let (page, row, col) = (page as usize, row as usize, col as usize);
+                if row < rows
+                    && col < columns
+                    && let Some(cell) = home_cells.get_mut((page * rows + row) * columns + col)
+                {
+                    *cell = kind;
+                }
             }
+        }
+        if item.is_picture {
+            home_pictures.push(item);
+        } else {
             home_items.push(item);
         }
     }
+    // Images of pictures no longer on Home.
+    PICTURES.with_borrow_mut(|pictures| {
+        pictures.retain(|file, _| {
+            config.home.iter().any(
+                |entry| matches!(&entry.content, HomeContent::Image(image) if image.file == *file),
+            )
+        })
+    });
     let home_list: Vec<HomeItem> = config
         .list_order()
         .into_iter()
@@ -462,6 +521,7 @@ fn refresh(window: &MainWindow) -> Result<()> {
     window.set_home_cells(ModelRc::new(VecModel::from(home_cells)));
     window.set_dock_cells(ModelRc::new(VecModel::from(dock_cells)));
     window.set_home_items(ModelRc::new(VecModel::from(home_items)));
+    window.set_home_pictures(ModelRc::new(VecModel::from(home_pictures)));
     window.set_dock_items(ModelRc::new(VecModel::from(dock_items)));
     window.set_home_list(ModelRc::new(VecModel::from(home_list)));
     let layout = window.global::<AppsLayout>();
@@ -473,6 +533,7 @@ fn refresh(window: &MainWindow) -> Result<()> {
     layout.set_label_lines(config.label_lines as i32);
 
     ALL_APPS.with_borrow_mut(|apps| *apps = items);
+    SHOWN_CONFIG.with_borrow_mut(|shown| *shown = config);
     apply_search(window);
     Ok(())
 }
@@ -622,6 +683,12 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
     launcher.on_expand_notifications(|| {
         log_error("expand notifications", system::expand_notifications())
     });
+    let weak = window.as_weak();
+    launcher.on_wallpaper_dimmed_changed(move || {
+        if let Some(window) = weak.upgrade() {
+            apply_system_bars(window.global::<Tokens>());
+        }
+    });
     launcher.on_haptic(|| log_error("haptic feedback", system::long_press_haptic()));
     let weak = window.as_weak();
     launcher.on_search(move |query| {
@@ -687,6 +754,36 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
         });
     });
     home.on_folder_shown(|id| OPEN_FOLDER.set((id >= 0).then_some(id as u32)));
+    home.on_can_move(|item, dock, page, col, row| {
+        SHOWN_CONFIG.with_borrow(|config| config.can_move(&item.key(), slot(dock, page, col, row)))
+    });
+    home.on_add_picture(|page, col, row| {
+        let cell = (page >= 0 && col >= 0 && row >= 0).then(|| slot(false, page, col, row));
+        PICTURE_SLOT.set(cell);
+        log_error("open the image picker", images::pick());
+    });
+    let weak = window.as_weak();
+    home.on_remove_picture(move |id| {
+        let mut file = None;
+        let result = config::update(|config| file = config.remove_image(to_index(id)));
+        // Only once it's no longer in the saved config.
+        if let (Ok(_), Some(file)) = (&result, file) {
+            log_error("delete picture image", images::delete(&file));
+        }
+        let result = result.and_then(|_| weak.upgrade().map_or(Ok(()), |window| refresh(&window)));
+        log_error("remove picture", result);
+    });
+    home.on_can_resize_picture(|id, columns, rows| {
+        SHOWN_CONFIG.with_borrow(|config| {
+            config.can_resize_image(to_index(id), to_index(columns), to_index(rows))
+        })
+    });
+    let weak = window.as_weak();
+    home.on_resize_picture(move |id, columns, rows| {
+        edit_home(&weak, "resize picture", |config| {
+            config.resize_image(to_index(id), to_index(columns), to_index(rows))
+        });
+    });
     let weak = window.as_weak();
     home.on_rename_folder(move |id, title| {
         edit_home(&weak, "rename folder", |config| {
@@ -733,6 +830,7 @@ fn run(app: slint::android::AndroidApp) -> Result<()> {
     android_ctx::init(&app)?;
     apps::init()?;
     config::init(app.internal_data_path())?;
+    images::init(app.internal_data_path())?;
 
     let home_window = HomeWindowCell::default();
     let listener_window = home_window.clone();
@@ -778,6 +876,32 @@ pub extern "system" fn Java_com_seelen_slu_1launcher_HomeActivity_nativeOnHomeIn
                 window.invoke_show_home();
             }
         }
+    })
+    .ok();
+}
+
+/// Called from `HomeActivity` (a background thread) once an image picked for
+/// Home (`HomeActions.add-picture`) was copied into the images directory as
+/// `file_name`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_seelen_slu_1launcher_HomeActivity_nativeOnImagePicked(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    file_name: jni::objects::JString,
+) {
+    let file: String = match env.get_string(&file_name) {
+        Ok(name) => name.into(),
+        Err(err) => {
+            log::error!("failed to read the picked image name: {err}");
+            return;
+        }
+    };
+    slint::invoke_from_event_loop(move || {
+        let Some(weak) = MAIN_WINDOW.with_borrow(|main| main.clone()) else {
+            return;
+        };
+        let cell = PICTURE_SLOT.take();
+        edit_home(&weak, "add picture", |config| config.add_image(&file, cell));
     })
     .ok();
 }

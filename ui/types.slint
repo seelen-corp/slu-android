@@ -21,14 +21,26 @@ export struct FolderItem {
     apps: [AppItem],
 }
 
-// An app or folder placed on Home: a cell of a grid page, or a slot of the
-// dock. In the list views, the same entries in list order.
+// An image picked by the user (`config::HomeImage`), on the Home grid only. It
+// covers `columns` x `rows` cells from its own cell (the top-left one).
+export struct PictureItem {
+    id: int,
+    source: image,
+    columns: int,
+    rows: int,
+}
+
+// An app, folder or picture placed on Home: a cell of a grid page, or a slot of
+// the dock. In the list views, the same entries (but pictures) in list order.
 export struct HomeItem {
     is-folder: bool,
-    // When not `is-folder`.
+    is-picture: bool,
+    // When neither `is-folder` nor `is-picture`.
     app: AppItem,
     // When `is-folder`.
     folder: FolderItem,
+    // When `is-picture`.
+    picture: PictureItem,
     dock: bool,
     // Grid page (ignored in the dock).
     page: int,

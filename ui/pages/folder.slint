@@ -10,8 +10,8 @@ import { WallpaperLabel } from "../components/wallpaper-label.slint";
 
 // A folder of Home, opened: its title as the whole first row (a transparent
 // input, edited by tapping it), then its apps in the view chosen in Settings,
-// over the wallpaper like Home and the Apps Menu. Swipe down (at the top) or
-// Back closes it.
+// over the wallpaper (behind the scrim, like a modal). Tapping the background,
+// swiping down (at the top) or Back closes it.
 export component FolderPage inherits Rectangle {
     in property <FolderItem> folder;
     in property <AppsView> view: AppsView.list;
@@ -67,6 +67,12 @@ export component FolderPage inherits Rectangle {
             if self.current-position.y - self.pressed-position.y >= root.close-distance {
                 root.close();
             }
+        }
+
+        // Behind everything: a tap on the background (outside the title and the
+        // apps) closes the folder, like the outside of a modal.
+        TouchArea {
+            clicked => { root.close(); }
         }
 
         VerticalLayout {
@@ -130,6 +136,13 @@ export component FolderPage inherits Rectangle {
                 columns: root.columns;
                 home-enabled: true;
                 in-folder: true;
+                // Only as tall as its apps (it scrolls if they don't fit): the
+                // space below is background.
+                max-height: self.content-height;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
             }
         }
     }

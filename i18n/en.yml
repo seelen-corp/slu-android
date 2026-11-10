@@ -4,6 +4,9 @@ home:
   wallpaper: Wallpaper
   folder: Folder
   disband_folder: Disband folder
+  add_picture: Add image
+  resize_picture: Resize
+  delete_picture: Delete
   empty: Swipe up to see all your apps. Long-press one and choose "Add to Home".
   empty_list: Tap "All apps" to see all your apps. Long-press one and choose "Add to Home".
 apps_menu:

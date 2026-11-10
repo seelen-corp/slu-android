@@ -35,6 +35,18 @@ export global HomeActions {
     callback rename-folder(id: int, title: string);
     // Removes a folder; its apps go back to Home (the first one in its place).
     callback disband-folder(id: int);
+    // Whether `move-to` would move the entry there (its cells fit in the grid,
+    // and no picture is on them).
+    pure callback can-move(item: HomeItem, dock: bool, page: int, col: int, row: int) -> bool;
+    // Opens the system image picker; the image goes to that grid cell if it's
+    // free, otherwise to the first free one.
+    callback add-picture(page: int, col: int, row: int);
+    // Removes a picture from Home (and its copy of the image).
+    callback remove-picture(id: int);
+    // Whether a picture can cover `columns` x `rows` cells from its own: they
+    // fit in the grid and nothing else is on them.
+    pure callback can-resize-picture(id: int, columns: int, rows: int) -> bool;
+    callback resize-picture(id: int, columns: int, rows: int);
 }
 
 // Launcher/system actions, implemented in Rust.
@@ -46,6 +58,8 @@ export global LauncherActions {
     callback haptic();
     // Apps Menu search; Rust filters the apps shown.
     callback search(query: string);
+    // `Tokens.wallpaper-dimmed` changed: Rust updates the system bar icons.
+    callback wallpaper-dimmed-changed();
 }
 
 // Touch interaction state shared by the app entries and the gesture handlers
@@ -54,4 +68,7 @@ export global Interaction {
     // An app entry recognized a long press and owns the touch until it's
     // released: the page/Apps Menu swipe gestures must not take it over.
     in-out property <bool> item-lifted: false;
+    // A picture of Home is being resized (its handles own the touch); cleared to
+    // leave that mode (tap elsewhere, Back, Home).
+    in-out property <bool> resizing-picture: false;
 }

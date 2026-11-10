@@ -10,6 +10,7 @@ import { Button, ButtonSkin } from "../components/button.slint";
 import { MenuSurface, MenuItem } from "../components/menu.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
 import { FolderIcon } from "../components/folder-icon.slint";
+import { HomePicture, PictureImage, ResizeHandle } from "../components/home-picture.slint";
 
 // Long press on an empty part of Home (opens the Home menu).
 component EmptySpaceTouch inherits TouchArea {
@@ -86,13 +87,18 @@ component HomeLayoutBase inherits Rectangle {
     in-out property <HomeItem> drag-item;
     in-out property <length> drag-x;
     in-out property <length> drag-y;
+    // The dragged entry moved beyond the tap slop (it will be dropped, not show
+    // its menu). Until then, the drag started by the long press may be cancelled.
+    in-out property <bool> drag-confirmed: false;
 
-    callback empty-long-pressed(x: length, y: length);
+    // Window coordinates, and the grid cell there (-1 outside the grid pages).
+    callback empty-long-pressed(x: length, y: length, page: int, col: int, row: int);
     callback open-folder(folder: FolderItem);
 
     protected pure function same-entry(a: HomeItem, b: HomeItem) -> bool {
-        return a.is-folder == b.is-folder && (a.is-folder
+        return a.is-folder == b.is-folder && a.is-picture == b.is-picture && (a.is-folder
             ? a.folder.id == b.folder.id
+            : a.is-picture ? a.picture.id == b.picture.id
             : a.app.package-name == b.app.package-name && a.app.activity-name == b.app.activity-name);
     }
 
@@ -104,6 +110,7 @@ component HomeLayoutBase inherits Rectangle {
         root.drag-item = item;
         root.drag-x = x;
         root.drag-y = y;
+        root.drag-confirmed = false;
         root.dragging = true;
     }
 }
@@ -111,6 +118,8 @@ component HomeLayoutBase inherits Rectangle {
 // Grid view: pages of cells (swiped horizontally) and the dock below them.
 component HomeGrid inherits HomeLayoutBase {
     in property <[HomeItem]> items: [];
+    // Pictures of the grid pages (`is-picture`), each over its cells.
+    in property <[HomeItem]> pictures: [];
     in property <[HomeItem]> dock-items: [];
     in property <int> columns: 4;
     in property <int> page-count: 1;
@@ -119,9 +128,9 @@ component HomeGrid inherits HomeLayoutBase {
     in property <length> swipe-offset: 0;
     in property <bool> swiping: false;
     // Used cells, from Rust: `home-cells[(page * home-rows + row) * columns + col]`
-    // and `dock-cells[col]`.
+    // (0 free, 1 app or folder, 2 picture) and `dock-cells[col]`.
     in property <int> home-rows: 1;
-    in property <[bool]> home-cells: [];
+    in property <[int]> home-cells: [];
     in property <[bool]> dock-cells: [];
 
     // The rows that fit changed; Rust saves them and moves the apps that no
@@ -146,10 +155,45 @@ component HomeGrid inherits HomeLayoutBase {
     property <length> pages-y: pages-area.absolute-position.y + root.edge;
     property <bool> over-dock: root.dragging && root.drag-y >= dock-area.absolute-position.y;
     property <bool> over-grid: root.dragging && !root.over-dock;
-    // Cell under the finger; half of the space around a cell counts as the cell.
-    property <int> target-col: clamp(floor((root.drag-x - root.pages-x) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
-    property <int> target-row: clamp(floor((root.drag-y - root.pages-y + root.row-gap / 2) / Math.max(1px, root.cell-height + root.row-gap)), 0, root.row-count - 1);
+    // A picture is dragged: it keeps the point it was grabbed by under the
+    // finger, and its target is the cell of its top-left corner.
+    property <bool> drag-picture: root.drag-item.is-picture;
+    property <length> grab-x;
+    property <length> grab-y;
+    // Cells the dragged entry covers.
+    property <int> span-cols: root.drag-picture ? root.drag-item.picture.columns : 1;
+    property <int> span-rows: root.drag-picture ? root.drag-item.picture.rows : 1;
+    // Cell under the finger (or of the dragged picture's corner); half of the
+    // space around a cell counts as the cell.
+    property <int> target-col: root.drag-picture
+        ? clamp(round((root.drag-x - root.grab-x - root.pages-x) / Math.max(1px, root.cell-width)), 0, Math.max(0, root.columns - root.span-cols))
+        : root.col-at(root.drag-x);
+    property <int> target-row: root.drag-picture
+        ? clamp(round((root.drag-y - root.grab-y - root.pages-y) / Math.max(1px, root.cell-height + root.row-gap)), 0, Math.max(0, root.row-count - root.span-rows))
+        : root.row-at(root.drag-y);
     property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
+
+    // Grid cell at a window position.
+    pure function col-at(x: length) -> int {
+        return clamp(floor((x - root.pages-x) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
+    }
+    pure function row-at(y: length) -> int {
+        return clamp(floor((y - root.pages-y + root.row-gap / 2) / Math.max(1px, root.cell-height + root.row-gap)), 0, root.row-count - 1);
+    }
+    // Position and size of an area of cells, in `pages-area` coordinates (of
+    // its page).
+    pure function area-x(col: int) -> length {
+        return root.edge + col * root.cell-width;
+    }
+    pure function area-y(row: int) -> length {
+        return root.edge + row * (root.cell-height + root.row-gap);
+    }
+    pure function area-width(cols: int) -> length {
+        return cols * root.cell-width;
+    }
+    pure function area-height(rows: int) -> length {
+        return rows * root.cell-height + Math.max(0, rows - 1) * root.row-gap;
+    }
 
     // The finger is over the icon of the target cell/slot (not just its cell):
     // dropping there merges into a folder, anywhere else moves/swaps.
@@ -162,15 +206,73 @@ component HomeGrid inherits HomeLayoutBase {
         : root.drag-y - root.pages-y - root.target-row * (root.cell-height + root.row-gap);
     property <bool> over-icon: root.in-cell-x >= root.icon-left && root.in-cell-x <= root.icon-left + root.icon-size
         && root.in-cell-y >= GridMetrics.cell-padding && root.in-cell-y <= GridMetrics.cell-padding + root.icon-size;
+    // An app or folder is in the target cell/slot (not a picture).
     property <bool> target-used: root.over-dock
         ? root.dock-cells[root.target-slot]
-        : root.target-row < root.home-rows && root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col];
+        : root.target-row < root.home-rows && root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col] == 1;
     // The dragged entry's own cell.
     property <bool> target-is-dragged: root.over-dock
         ? root.drag-item.dock && root.drag-item.col == root.target-slot
         : !root.drag-item.dock && root.drag-item.page == root.current-page && root.drag-item.col == root.target-col && root.drag-item.row == root.target-row;
-    // Folders don't go into folders.
-    property <bool> merging: root.dragging && !root.drag-item.is-folder && root.over-icon && root.target-used && !root.target-is-dragged;
+    // Folders don't go into folders; pictures go into nothing.
+    property <bool> merging: root.dragging && !root.drag-item.is-folder && !root.drag-picture && root.over-icon && root.target-used && !root.target-is-dragged;
+    // Dropping there does something: nothing goes onto a picture, and pictures
+    // stay out of the dock and inside the grid.
+    property <bool> drop-allowed: root.merging || (root.over-dock
+        ? HomeActions.can-move(root.drag-item, true, 0, root.target-slot, 0)
+        : HomeActions.can-move(root.drag-item, false, root.current-page, root.target-col, root.target-row));
+
+    // Picture being resized (`Interaction.resizing-picture`) and the cells it
+    // covers meanwhile (only sizes Rust allows).
+    property <HomeItem> resize-item;
+    property <int> resize-cols: 1;
+    property <int> resize-rows: 1;
+    property <bool> resizing: Interaction.resizing-picture;
+
+    function start-resize(item: HomeItem) {
+        root.resize-item = item;
+        root.resize-cols = item.picture.columns;
+        root.resize-rows = item.picture.rows;
+        Interaction.resizing-picture = true;
+    }
+
+    // A handle was dragged to a window position: the size whose corner is
+    // nearest to it, if it's allowed; otherwise as much of it as is.
+    function resize-to(x: length, y: length, horizontal: bool, vertical: bool) {
+        let cols = !horizontal ? root.resize-cols
+            : clamp(round((x - root.pages-x - root.resize-item.col * root.cell-width) / Math.max(1px, root.cell-width)), 1, Math.max(1, root.columns - root.resize-item.col));
+        let rows = !vertical ? root.resize-rows
+            : clamp(round((y - root.pages-y - root.resize-item.row * (root.cell-height + root.row-gap) + root.row-gap) / Math.max(1px, root.cell-height + root.row-gap)), 1, Math.max(1, root.row-count - root.resize-item.row));
+        let id = root.resize-item.picture.id;
+        if cols == root.resize-cols && rows == root.resize-rows {
+            return;
+        }
+        if HomeActions.can-resize-picture(id, cols, rows) {
+            root.resize-cols = cols;
+            root.resize-rows = rows;
+        } else if cols != root.resize-cols && HomeActions.can-resize-picture(id, cols, root.resize-rows) {
+            root.resize-cols = cols;
+        } else if rows != root.resize-rows && HomeActions.can-resize-picture(id, root.resize-cols, rows) {
+            root.resize-rows = rows;
+        }
+    }
+
+    // A handle was released: saves the size.
+    function commit-resize() {
+        if root.resize-cols != root.resize-item.picture.columns || root.resize-rows != root.resize-item.picture.rows {
+            HomeActions.resize-picture(root.resize-item.picture.id, root.resize-cols, root.resize-rows);
+            root.resize-item.picture.columns = root.resize-cols;
+            root.resize-item.picture.rows = root.resize-rows;
+        }
+    }
+
+    // Columns/rows a picture is drawn with: its own, or the resize in progress.
+    pure function picture-cols(item: HomeItem) -> int {
+        return root.resizing && item.picture.id == root.resize-item.picture.id ? root.resize-cols : item.picture.columns;
+    }
+    pure function picture-rows(item: HomeItem) -> int {
+        return root.resizing && item.picture.id == root.resize-item.picture.id ? root.resize-rows : item.picture.rows;
+    }
 
     function report-rows() {
         // Not before the layout has a real size.
@@ -185,12 +287,16 @@ component HomeGrid inherits HomeLayoutBase {
     // Dragging an app to a side edge flips the page.
     property <length> edge-zone: 24px;
     property <bool> at-left-edge: root.drag-x < root.pages-x + root.edge-zone;
-    property <bool> at-right-edge: root.drag-x > root.pages-x + pages-area.width - root.edge-zone;
+    // Mirrors the left one: `pages-x` already includes the left padding, so the
+    // cells end at `pages-x + inner-width` (not `+ pages-area.width`).
+    property <bool> at-right-edge: root.drag-x > root.pages-x + root.inner-width - root.edge-zone;
 
     function end-drag(x: length, y: length) {
         root.drag-x = x;
         root.drag-y = y;
-        if root.over-dock {
+        if !root.drop-allowed {
+            // Back to where it was.
+        } else if root.over-dock {
             if root.merging {
                 HomeActions.merge-into(root.drag-item, true, 0, root.target-slot, 0);
             } else {
@@ -205,14 +311,19 @@ component HomeGrid inherits HomeLayoutBase {
     }
 
     EmptySpaceTouch {
-        long-pressed(x, y) => { root.empty-long-pressed(x, y); }
+        long-pressed(x, y) => {
+            let in-grid = y < dock-area.absolute-position.y;
+            root.empty-long-pressed(x, y, in-grid ? root.current-page : -1, in-grid ? root.col-at(x) : -1, in-grid ? root.row-at(y) : -1);
+        }
     }
 
     label-metrics := GridLabelMetrics { }
 
     Timer {
         interval: 700ms;
-        running: root.over-grid && (root.at-left-edge || root.at-right-edge);
+        // Only once it is really being moved (not while the finger rests on an
+        // app of the edge column, about to open its menu).
+        running: root.over-grid && root.drag-confirmed && (root.at-left-edge || root.at-right-edge);
         triggered => {
             if root.at-left-edge && root.current-page > 0 {
                 root.current-page -= 1;
@@ -227,7 +338,7 @@ component HomeGrid inherits HomeLayoutBase {
             vertical-stretch: 1;
             clip: true;
 
-            if root.items.length == 0 && root.dock-items.length == 0 && !root.dragging: VerticalLayout {
+            if root.items.length == 0 && root.pictures.length == 0 && root.dock-items.length == 0 && !root.dragging: VerticalLayout {
                 padding: Tokens.spacing-xl;
                 alignment: center;
 
@@ -238,11 +349,11 @@ component HomeGrid inherits HomeLayoutBase {
                 }
             }
 
-            if root.over-grid && !root.merging: DropHighlight {
-                x: root.edge + root.target-col * root.cell-width;
-                y: root.edge + root.target-row * (root.cell-height + root.row-gap);
-                width: root.cell-width;
-                height: root.cell-height;
+            if root.over-grid && !root.merging && root.drop-allowed: DropHighlight {
+                x: root.area-x(root.target-col);
+                y: root.area-y(root.target-row);
+                width: root.area-width(root.span-cols);
+                height: root.area-height(root.span-rows);
             }
 
             // Merge target: around the icon only.
@@ -263,6 +374,29 @@ component HomeGrid inherits HomeLayoutBase {
                     easing: ease-out;
                 }
 
+                for item in root.pictures: HomePicture {
+                    x: item.page * pages-area.width + root.area-x(item.col);
+                    y: root.area-y(item.row);
+                    width: root.area-width(root.picture-cols(item));
+                    height: root.area-height(root.picture-rows(item));
+                    picture: item.picture;
+                    content-hidden: root.is-dragged(item);
+                    resize-picture => { root.start-resize(item); }
+                    drag-started(x, y) => {
+                        // The picture is on the current page.
+                        root.grab-x = x - root.pages-x - item.col * root.cell-width;
+                        root.grab-y = y - root.pages-y - item.row * (root.cell-height + root.row-gap);
+                        root.start-drag(item, x, y);
+                    }
+                    drag-confirmed => { root.drag-confirmed = true; }
+                    drag-cancelled => { root.dragging = false; }
+                    drag-moved(x, y) => {
+                        root.drag-x = x;
+                        root.drag-y = y;
+                    }
+                    drag-ended(x, y) => { root.end-drag(x, y); }
+                }
+
                 for item in root.items: AppGridItem {
                     x: item.page * pages-area.width + root.edge + item.col * root.cell-width;
                     y: root.edge + item.row * (root.cell-height + root.row-gap);
@@ -279,6 +413,8 @@ component HomeGrid inherits HomeLayoutBase {
                     content-hidden: root.is-dragged(item);
                     open-folder => { root.open-folder(item.folder); }
                     drag-started(x, y) => { root.start-drag(item, x, y); }
+                    drag-confirmed => { root.drag-confirmed = true; }
+                    drag-cancelled => { root.dragging = false; }
                     drag-moved(x, y) => {
                         root.drag-x = x;
                         root.drag-y = y;
@@ -299,7 +435,7 @@ component HomeGrid inherits HomeLayoutBase {
         dock-area := Rectangle {
             height: root.dock-cell-height + root.edge;
 
-            if root.over-dock && !root.merging: DropHighlight {
+            if root.over-dock && !root.merging && root.drop-allowed: DropHighlight {
                 x: root.edge + root.target-slot * root.cell-width;
                 y: 0;
                 width: root.cell-width;
@@ -329,12 +465,62 @@ component HomeGrid inherits HomeLayoutBase {
                 content-hidden: root.is-dragged(item);
                 open-folder => { root.open-folder(item.folder); }
                 drag-started(x, y) => { root.start-drag(item, x, y); }
+                drag-confirmed => { root.drag-confirmed = true; }
+                drag-cancelled => { root.dragging = false; }
                 drag-moved(x, y) => {
                     root.drag-x = x;
                     root.drag-y = y;
                 }
                 drag-ended(x, y) => { root.end-drag(x, y); }
             }
+        }
+    }
+
+    // The picture being dragged, under the finger (by the point it was grabbed).
+    if root.dragging && root.drag-picture: PictureImage {
+        x: root.drag-x - root.grab-x - root.absolute-position.x + GridMetrics.cell-padding;
+        y: root.drag-y - root.grab-y - root.absolute-position.y + GridMetrics.cell-padding;
+        width: Math.max(0, root.area-width(root.span-cols) - 2 * GridMetrics.cell-padding);
+        height: Math.max(0, root.area-height(root.span-rows) - 2 * GridMetrics.cell-padding);
+        source: root.drag-item.picture.source;
+    }
+
+    // Resize mode: the picture's outline with handles on its right side, bottom
+    // side and corner. Tapping anywhere else leaves it.
+    if root.resizing: TouchArea {
+        clicked => { Interaction.resizing-picture = false; }
+    }
+
+    if root.resizing: Rectangle {
+        x: pages-area.x + root.area-x(root.resize-item.col);
+        y: pages-area.y + root.area-y(root.resize-item.row);
+        width: root.area-width(root.resize-cols);
+        height: root.area-height(root.resize-rows);
+
+        // Selection outline, concentric with the image (inset by the cell padding).
+        Rectangle {
+            border-radius: Tokens.radius-m + GridMetrics.cell-padding;
+            border-width: 2px;
+            border-color: Tokens.system-accent-color;
+        }
+
+        ResizeHandle {
+            x: parent.width - self.width / 2;
+            y: (parent.height - self.height) / 2;
+            dragged(x, y) => { root.resize-to(x, y, true, false); }
+            released => { root.commit-resize(); }
+        }
+        ResizeHandle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - self.height / 2;
+            dragged(x, y) => { root.resize-to(x, y, false, true); }
+            released => { root.commit-resize(); }
+        }
+        ResizeHandle {
+            x: parent.width - self.width / 2;
+            y: parent.height - self.height / 2;
+            dragged(x, y) => { root.resize-to(x, y, true, true); }
+            released => { root.commit-resize(); }
         }
     }
 }
@@ -400,7 +586,7 @@ component HomeList inherits HomeLayoutBase {
                 EmptySpaceTouch {
                     width: scroll.visible-width;
                     height: scroll.viewport-height;
-                    long-pressed(x, y) => { root.empty-long-pressed(x, y); }
+                    long-pressed(x, y) => { root.empty-long-pressed(x, y, -1, -1, -1); }
                 }
 
                 if root.items.length == 0: VerticalLayout {
@@ -444,6 +630,8 @@ component HomeList inherits HomeLayoutBase {
                     content-hidden: root.is-dragged(item);
                     open-folder => { root.open-folder(item.folder); }
                     drag-started(x, y) => { root.start-drag(item, x, y); }
+                    drag-confirmed => { root.drag-confirmed = true; }
+                    drag-cancelled => { root.dragging = false; }
                     drag-moved(x, y) => {
                         root.drag-x = x;
                         root.drag-y = y;
@@ -475,12 +663,13 @@ component HomeList inherits HomeLayoutBase {
 export component HomePage inherits Rectangle {
     // Grid view.
     in property <[HomeItem]> items: [];
+    in property <[HomeItem]> pictures: [];
     in property <[HomeItem]> dock-items: [];
     in property <int> columns: 4;
     in property <int> pages: 1;
     // Used cells of the grid and dock (see `HomeGrid`).
     in property <int> rows: 1;
-    in property <[bool]> cells: [];
+    in property <[int]> cells: [];
     in property <[bool]> dock-cells: [];
     // List views: every Home entry (apps and folders), in order.
     in property <[HomeItem]> list-items: [];
@@ -500,6 +689,7 @@ export component HomePage inherits Rectangle {
     public function cancel-drag() {
         root.dragging = false;
         Interaction.item-lifted = false;
+        Interaction.resizing-picture = false;
         root.clamp-page();
     }
 
@@ -528,6 +718,10 @@ export component HomePage inherits Rectangle {
 
     property <length> menu-x;
     property <length> menu-y;
+    // Grid cell the Home menu was opened on (-1 outside the grid pages).
+    property <int> menu-page: -1;
+    property <int> menu-col: -1;
+    property <int> menu-row: -1;
 
     function clamp-page() {
         if root.current-page >= root.page-count {
@@ -545,9 +739,12 @@ export component HomePage inherits Rectangle {
         }
     }
 
-    function show-menu(x: length, y: length) {
+    function show-menu(x: length, y: length, page: int, col: int, row: int) {
         root.menu-x = x - root.absolute-position.x;
         root.menu-y = y - root.absolute-position.y;
+        root.menu-page = page;
+        root.menu-col = col;
+        root.menu-row = row;
         home-menu.show();
     }
 
@@ -561,7 +758,7 @@ export component HomePage inherits Rectangle {
     swipe := SwipeGestureHandler {
         // Grid view only (HomeList has its own). An app being pressed/dragged owns
         // the touch.
-        enabled: root.grid && !Interaction.item-lifted && !root.dragging;
+        enabled: root.grid && !Interaction.item-lifted && !root.dragging && !Interaction.resizing-picture;
         handle-swipe-left: true;
         handle-swipe-right: true;
         handle-swipe-up: true;
@@ -615,6 +812,7 @@ export component HomePage inherits Rectangle {
             if root.grid: HomeGrid {
                 vertical-stretch: 1;
                 items: root.items;
+                pictures: root.pictures;
                 dock-items: root.dock-items;
                 columns: root.columns;
                 home-rows: root.rows;
@@ -629,7 +827,7 @@ export component HomePage inherits Rectangle {
                 drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
-                empty-long-pressed(x, y) => { root.show-menu(x, y); }
+                empty-long-pressed(x, y, page, col, row) => { root.show-menu(x, y, page, col, row); }
                 open-folder(folder) => { root.open-folder(folder); }
             }
 
@@ -642,7 +840,7 @@ export component HomePage inherits Rectangle {
                 drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
-                empty-long-pressed(x, y) => { root.show-menu(x, y); }
+                empty-long-pressed(x, y, page, col, row) => { root.show-menu(x, y, page, col, row); }
                 open-folder(folder) => { root.open-folder(folder); }
                 swiped-down => { root.swipe-down(); }
                 open-apps-menu(focus-search) => { root.open-apps-menu(focus-search); }
@@ -650,39 +848,29 @@ export component HomePage inherits Rectangle {
         }
     }
 
-    // The entry being dragged, under the finger.
-    if root.dragging: Rectangle {
+    // The entry being dragged, under the finger: only its icon (the text list
+    // has no icons, so there it's its title). Pictures are drawn by `HomeGrid`.
+    if root.dragging && !root.drag-item.is-picture: Rectangle {
         width: Math.max(96px, AppsLayout.item-size);
         height: Math.max(96px, AppsLayout.item-size);
         x: root.drag-x - root.absolute-position.x - self.width / 2;
         y: root.drag-y - root.absolute-position.y - self.height / 2;
 
-        VerticalLayout {
-            alignment: center;
-            spacing: Tokens.spacing-2xs;
-
-            HorizontalLayout {
-                alignment: center;
-
-                if !root.drag-item.is-folder: Image {
-                    source: root.drag-item.app.icon;
-                    width: root.drag-icon-size;
-                    height: root.drag-icon-size;
-                }
-                if root.drag-item.is-folder: FolderIcon {
-                    apps: root.drag-item.folder.apps;
-                    width: root.drag-icon-size;
-                    height: root.drag-icon-size;
-                }
-            }
-
-            WallpaperLabel {
-                text: !root.drag-item.is-folder ? root.drag-item.app.title
-                    : root.drag-item.folder.title != "" ? root.drag-item.folder.title : I18n.t("home.folder");
-                font-size: GridMetrics.label-font-size;
-                horizontal-alignment: center;
-                wrap: AppsLayout.label-lines > 1 ? TextWrap.word-wrap : TextWrap.no-wrap;
-            }
+        if root.view != AppsView.text-list && !root.drag-item.is-folder: Image {
+            source: root.drag-item.app.icon;
+            width: root.drag-icon-size;
+            height: root.drag-icon-size;
+        }
+        if root.view != AppsView.text-list && root.drag-item.is-folder: FolderIcon {
+            apps: root.drag-item.folder.apps;
+            width: root.drag-icon-size;
+            height: root.drag-icon-size;
+        }
+        if root.view == AppsView.text-list: WallpaperLabel {
+            text: !root.drag-item.is-folder ? root.drag-item.app.title
+                : root.drag-item.folder.title != "" ? root.drag-item.folder.title : I18n.t("home.folder");
+            font-size: ListMetrics.label-font-size;
+            horizontal-alignment: center;
         }
     }
 
@@ -697,6 +885,14 @@ export component HomePage inherits Rectangle {
                 text: I18n.t("home.wallpaper");
                 activated => {
                     LauncherActions.open-wallpaper-picker();
+                    home-menu.close();
+                }
+            }
+            // Pictures are only shown on the grid.
+            if root.grid: MenuItem {
+                text: I18n.t("home.add_picture");
+                activated => {
+                    HomeActions.add-picture(root.menu-page, root.menu-col, root.menu-row);
                     home-menu.close();
                 }
             }

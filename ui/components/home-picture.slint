@@ -1,0 +1,81 @@
+import { Tokens } from "../tokens.slint";
+import { AppItemBase } from "app-item-base.slint";
+import { GridMetrics } from "app-grid.slint";
+
+// The image of a picture of Home: covers its whole area (cropped, never
+// stretched), with the corners of a card.
+export component PictureImage inherits Rectangle {
+    in property <image> source;
+
+    border-radius: Tokens.radius-m;
+    clip: true;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: cover;
+    }
+
+    @children
+}
+
+// A picture of Home (`PictureItem`), as big as the cells it covers. The image is
+// inset like the app icons (`GridMetrics.cell-padding`). Long press: drag it, or
+// its menu (resize, delete).
+export component HomePicture inherits AppItemBase {
+    // Hides the visuals but keeps the touch alive (it's being dragged).
+    in property <bool> content-hidden: false;
+
+    is-picture: true;
+    on-home: true;
+    home-enabled: true;
+    draggable: true;
+    accessible-role: image;
+
+    PictureImage {
+        x: GridMetrics.cell-padding;
+        y: GridMetrics.cell-padding;
+        width: Math.max(0, root.width - 2 * GridMetrics.cell-padding);
+        height: Math.max(0, root.height - 2 * GridMetrics.cell-padding);
+        source: root.picture.source;
+        visible: !root.content-hidden;
+
+        if root.pressed: Rectangle {
+            background: Tokens.slu-std-ui-pressed-overlay;
+        }
+    }
+}
+
+// Handle of a picture being resized: a round control with a bigger touch area
+// around it. Positions are in window coordinates.
+export component ResizeHandle inherits Rectangle {
+    callback dragged(x: length, y: length);
+    callback released();
+
+    width: 40px;
+    height: 40px;
+
+    Rectangle {
+        width: 16px;
+        height: 16px;
+        border-radius: self.width / 2;
+        background: Tokens.slu-std-ui-color;
+        drop-shadow-offset-y: Tokens.shadow-s-offset;
+        drop-shadow-blur: Tokens.shadow-s-blur;
+        drop-shadow-color: Tokens.shadow-s-color;
+    }
+
+    touch := TouchArea {
+        moved => {
+            if self.pressed {
+                root.dragged(root.absolute-position.x + self.mouse-x, root.absolute-position.y + self.mouse-y);
+            }
+        }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.released();
+            }
+        }
+    }
+}

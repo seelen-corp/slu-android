@@ -27,6 +27,13 @@ export global GridMetrics {
     public pure function cell-height(icon-size: length, show-label: bool, label-height: length) -> length {
         return icon-size + 2 * GridMetrics.cell-padding + (show-label ? Tokens.spacing-2xs + label-height : 0);
     }
+    // Height of an `AppGrid` `width` wide: its rows, separated and surrounded by
+    // `AppsLayout.padding`.
+    public pure function grid-height(width: length, columns: int, count: int, label-height: length) -> length {
+        let cell = GridMetrics.cell-height(GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, width - 2 * AppsLayout.padding), columns)), true, label-height);
+        let rows = Math.ceil(count / Math.max(1, columns));
+        return 2 * AppsLayout.padding + rows * cell + Math.max(0, rows - 1) * AppsLayout.padding;
+    }
 }
 
 // Icon with the title below, centered in its cell. The icon has the size given
@@ -103,9 +110,8 @@ export component AppGrid inherits Rectangle {
     property <length> label-height: AppsLayout.label-lines * label-metrics.preferred-height;
     property <length> cell-height: GridMetrics.cell-height(self.icon-size, true, self.label-height);
     property <length> row-gap: AppsLayout.padding;
-    property <int> row-count: Math.ceil(self.apps.length / self.columns);
 
-    preferred-height: 2 * self.edge + self.row-count * self.cell-height + Math.max(0, self.row-count - 1) * self.row-gap;
+    preferred-height: GridMetrics.grid-height(self.width, self.columns, self.apps.length, self.label-height);
 
     label-metrics := GridLabelMetrics { }
 

@@ -1,17 +1,22 @@
 import { I18n } from "../i18n.slint";
 import { AppActions, HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
-import { AppItem, FolderItem } from "../types.slint";
+import { AppItem, FolderItem, PictureItem } from "../types.slint";
 import { MenuSurface, MenuItem } from "menu.slint";
 
 // Behaviour shared by every Home/app entry (list row, grid cell, Home cell): tap
-// opens the app (or the folder); a long press "lifts" it (haptic tick);
-// releasing a lifted entry shows its menu, and moving it (only `draggable`
-// entries, on Home) drags it instead. The visuals are the children.
+// opens the app (or the folder; a picture does nothing); a long press "lifts" it (haptic tick) and, for
+// `draggable` entries (on Home), starts dragging it right away. Releasing a
+// lifted entry shows its menu, unless it was moved beyond the tap slop: then
+// it's dropped instead. The visuals are the children.
 export component AppItemBase inherits Rectangle {
     in property <AppItem> app;
     // A folder of Home instead of an app (`folder`); tapping it `open-folder`.
     in property <bool> is-folder: false;
     in property <FolderItem> folder;
+    // A picture of Home instead of an app (`picture`); its menu offers
+    // `resize-picture` and removing it.
+    in property <bool> is-picture: false;
+    in property <PictureItem> picture;
     // Entry shown on Home (vs. the Apps Menu); decides the menu actions.
     in property <bool> on-home: false;
     // App shown inside a folder of Home.
@@ -20,6 +25,8 @@ export component AppItemBase inherits Rectangle {
     in property <bool> home-enabled: false;
     in property <bool> draggable: false;
 
+    // An app (not a folder or a picture).
+    property <bool> is-app: !root.is-folder && !root.is-picture;
     // Title shown: the app's, or the folder's (its default if it has none).
     out property <string> title: !root.is-folder ? root.app.title
         : root.folder.title != "" ? root.folder.title : I18n.t("home.folder");
@@ -27,13 +34,25 @@ export component AppItemBase inherits Rectangle {
     out property <bool> pressed: touch.pressed;
     // A long press was recognized and the touch is still down.
     out property <bool> lifted: touch.pressed && root.long-pressed;
+    // Being dragged: from the long press until it's released.
     out property <bool> dragging: false;
+    // Moved beyond the tap slop while dragging: releasing drops it (no menu).
+    out property <bool> dragged: false;
 
     callback open-folder();
+    // "Resize" of a picture's menu.
+    callback resize-picture();
     // Drag of a `draggable` entry. Positions are in window coordinates.
+    // Started by the long press.
     callback drag-started(x: length, y: length);
+    // It moved beyond the tap slop (`dragged`): it will be dropped.
+    callback drag-confirmed();
     callback drag-moved(x: length, y: length);
+    // Released after `drag-confirmed`: drop it there.
     callback drag-ended(x: length, y: length);
+    // Released without moving (its menu opens instead), or the touch was lost
+    // before: nothing moves.
+    callback drag-cancelled();
 
     // Set by the long press until the next touch, so releasing doesn't also open the app.
     private property <bool> long-pressed: false;
@@ -46,7 +65,7 @@ export component AppItemBase inherits Rectangle {
     function activate() {
         if root.is-folder {
             root.open-folder();
-        } else {
+        } else if !root.is-picture {
             AppActions.launch(root.app);
         }
     }
@@ -62,11 +81,17 @@ export component AppItemBase inherits Rectangle {
                 root.long-pressed = false;
                 root.moved-away = false;
                 root.dragging = false;
+                root.dragged = false;
             } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
-                if root.dragging {
-                    root.dragging = false;
+                if root.dragging && root.dragged {
                     root.drag-ended(root.pointer-x, root.pointer-y);
-                } else if root.long-pressed && event.kind == PointerEventKind.up {
+                } else if root.dragging {
+                    root.drag-cancelled();
+                }
+                let show-menu = root.long-pressed && !root.dragged && event.kind == PointerEventKind.up;
+                root.dragging = false;
+                root.dragged = false;
+                if show-menu {
                     menu.show();
                 }
                 Interaction.item-lifted = false;
@@ -81,9 +106,11 @@ export component AppItemBase inherits Rectangle {
                 }
                 return;
             }
-            if root.draggable && !root.dragging && far {
-                root.dragging = true;
-                root.drag-started(root.pointer-x, root.pointer-y);
+            // No haptic here: the long press tick already says both "release for
+            // the menu" and "move to drag it".
+            if root.dragging && !root.dragged && far {
+                root.dragged = true;
+                root.drag-confirmed();
             }
             if root.dragging {
                 root.drag-moved(root.pointer-x, root.pointer-y);
@@ -105,6 +132,11 @@ export component AppItemBase inherits Rectangle {
             // From now on this entry owns the touch (no page/list swipes).
             Interaction.item-lifted = true;
             LauncherActions.haptic();
+            // The menu is ready and, together with it, the drag.
+            if root.draggable {
+                root.dragging = true;
+                root.drag-started(root.pointer-x, root.pointer-y);
+            }
         }
     }
 
@@ -115,11 +147,25 @@ export component AppItemBase inherits Rectangle {
         MenuSurface {
             min-width: 200px;
 
-            // A folder's only action; the others are the app's.
+            // A folder's only action; the pictures' two; the others are the app's.
             if root.is-folder: MenuItem {
                 text: I18n.t("home.disband_folder");
                 activated => {
                     HomeActions.disband-folder(root.folder.id);
+                    menu.close();
+                }
+            }
+            if root.is-picture: MenuItem {
+                text: I18n.t("home.resize_picture");
+                activated => {
+                    root.resize-picture();
+                    menu.close();
+                }
+            }
+            if root.is-picture: MenuItem {
+                text: I18n.t("home.delete_picture");
+                activated => {
+                    HomeActions.remove-picture(root.picture.id);
                     menu.close();
                 }
             }
@@ -137,21 +183,21 @@ export component AppItemBase inherits Rectangle {
                     menu.close();
                 }
             }
-            if root.on-home && !root.is-folder: MenuItem {
+            if root.on-home && root.is-app: MenuItem {
                 text: I18n.t("app_actions.remove_from_home");
                 activated => {
                     AppActions.remove-from-home(root.app);
                     menu.close();
                 }
             }
-            if !root.is-folder: MenuItem {
+            if root.is-app: MenuItem {
                 text: I18n.t("app_actions.app_info");
                 activated => {
                     AppActions.app-info(root.app);
                     menu.close();
                 }
             }
-            if !root.is-folder && root.app.uninstallable: MenuItem {
+            if root.is-app && root.app.uninstallable: MenuItem {
                 text: I18n.t("app_actions.uninstall");
                 activated => {
                     AppActions.uninstall(root.app);

@@ -93,9 +93,17 @@ export global Tokens {
     // Content-derived (manifesto §4): set from Rust with the wallpaper's own hint
     // (`WallpaperColors`), so labels stay legible on light and dark wallpapers.
     in property <bool> wallpaper-supports-dark-text: false;
-    out property <color> wallpaper-fg-color: root.wallpaper-supports-dark-text ? root.color-fixed-gray-900 : root.color-fixed-gray-25;
+    // The wallpaper is behind `scrim-color` (Apps Menu, an open folder): it's dark
+    // whatever it is, so the content over it is light. Set by the main window.
+    in-out property <bool> wallpaper-dimmed: false;
+    property <bool> dark-text-over-wallpaper: root.wallpaper-supports-dark-text && !root.wallpaper-dimmed;
+    out property <color> wallpaper-fg-color: root.dark-text-over-wallpaper ? root.color-fixed-gray-900 : root.color-fixed-gray-25;
     // UX exception "text-shadow: text drawn over dynamic images" (only behind light
     // text, where the wallpaper can be anything but dark).
-    out property <bool> wallpaper-text-shadow: !root.wallpaper-supports-dark-text;
+    out property <bool> wallpaper-text-shadow: !root.dark-text-over-wallpaper;
     out property <color> wallpaper-text-shadow-color: root.shadow-color.with-alpha(0.5);
+
+    // UX exception "dark translucent full-screen overlay (scrim)": over the
+    // wallpaper behind modal views (an open folder) and the Apps Menu.
+    out property <color> scrim-color: root.color-fixed-gray-900.with-alpha(0.5);
 }
