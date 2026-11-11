@@ -3,6 +3,7 @@ import { Tokens } from "../tokens.slint";
 import { AppActions, Interaction, LauncherActions } from "../app-actions.slint";
 import { AppItem, AppsView } from "../types.slint";
 import { AppCollection } from "../components/app-collection.slint";
+import { TopSwipeArea } from "../components/top-swipe-area.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { TextField } from "../components/text-field.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
@@ -45,15 +46,15 @@ export component AppsMenuPage inherits Rectangle {
         triggered => { root.apply-search(); }
     }
 
-    SwipeGestureHandler {
-        // Only at the top: anywhere else a downward drag scrolls the apps.
-        enabled: root.home-enabled && collection.at-top && !Interaction.item-lifted;
-        handle-swipe-down: true;
-        swiped => {
-            if self.current-position.y - self.pressed-position.y >= root.close-distance {
-                search.unfocus-text();
-                root.close();
-            }
+    // Swipe down with the apps at the top closes back to Home.
+    TopSwipeArea {
+        active: root.home-enabled && !Interaction.item-lifted;
+        scroll-y <=> collection.scroll-y;
+        scroll-range: collection.scroll-range;
+        swipe-distance: root.close-distance;
+        swiped-down => {
+            search.unfocus-text();
+            root.close();
         }
 
         VerticalLayout {

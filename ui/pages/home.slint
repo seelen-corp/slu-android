@@ -9,6 +9,7 @@ import { AppListItem, ListLabelMetrics, ListMetrics } from "../components/app-li
 import { Button, ButtonSkin } from "../components/button.slint";
 import { MenuSurface, MenuItem } from "../components/menu.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
+import { TopSwipeArea } from "../components/top-swipe-area.slint";
 import { FolderIcon } from "../components/folder-icon.slint";
 import { HomePicture, PictureImage, ResizeHandle } from "../components/home-picture.slint";
 
@@ -617,18 +618,13 @@ component HomeList inherits HomeLayoutBase {
         root.dragging = false;
     }
 
-    SwipeGestureHandler {
-        enabled: !Interaction.item-lifted && !root.dragging;
-        handle-swipe-up: scroll.viewport-height <= scroll.visible-height;
-        handle-swipe-down: scroll.viewport-y >= 0;
-        swiped => {
-            let dy = self.current-position.y - self.pressed-position.y;
-            if dy <= -root.swipe-distance {
-                root.open-apps-menu(false);
-            } else if dy >= root.swipe-distance {
-                root.swiped-down();
-            }
-        }
+    TopSwipeArea {
+        active: !Interaction.item-lifted && !root.dragging;
+        scroll-y <=> scroll.viewport-y;
+        scroll-range: scroll.viewport-height - scroll.visible-height;
+        swipe-distance: root.swipe-distance;
+        swiped-up => { root.open-apps-menu(false); }
+        swiped-down => { root.swiped-down(); }
 
         VerticalLayout {
             scroll := ScrollView {
@@ -762,6 +758,9 @@ export component HomePage inherits Rectangle {
     property <int> swipe-axis: 0;
     // Minimum vertical swipe to open the Apps Menu / search.
     property <length> swipe-distance: 48px;
+    // Minimum horizontal swipe to change the grid page (fixed, not relative to
+    // the screen width, so a short flick is enough).
+    property <length> page-swipe-distance: 32px;
 
     // Size of the dragged icon: the same as in the view (see AppGridItem, AppListItem).
     property <length> drag-icon-size: root.grid
@@ -834,9 +833,9 @@ export component HomePage inherits Rectangle {
         }
         swiped => {
             if root.swipe-axis == 1 {
-                if self.dx < -root.width / 5 && root.current-page < root.page-count - 1 {
+                if self.dx < -root.page-swipe-distance && root.current-page < root.page-count - 1 {
                     root.current-page += 1;
-                } else if self.dx > root.width / 5 && root.current-page > 0 {
+                } else if self.dx > root.page-swipe-distance && root.current-page > 0 {
                     root.current-page -= 1;
                 }
             } else if root.swipe-axis == 2 {

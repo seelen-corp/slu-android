@@ -14,15 +14,15 @@ export component AppCollection inherits Rectangle {
     in property <bool> in-folder: false;
     // Grid view.
     in property <int> columns: 4;
-    // Scrolled to the very top (a swipe down there is free for the parent).
-    out property <bool> at-top: self.scroll-y >= 0;
     // Height of all the apps (with their padding), scrolled or not.
     out property <length> content-height: root.view == AppsView.grid
         ? GridMetrics.grid-height(root.width, root.columns, root.apps.length, AppsLayout.label-lines * grid-label.preferred-height)
         : 2 * AppsLayout.padding + root.apps.length * ListMetrics.row-height(list-label.preferred-height);
+    // How far the apps scroll (<= 0: they fit). For `TopSwipeArea`.
+    out property <length> scroll-range: root.content-height - root.height;
 
     // The viewport-y of the list/grid (0 at the top, negative when scrolled).
-    property <length> scroll-y: 0;
+    in-out property <length> scroll-y: 0;
 
     public function scroll-to-top() {
         self.scroll-y = 0;

@@ -1,0 +1,108 @@
+// A page with a scrollable list whose top edge also takes vertical swipes
+// (swipe down to close the page or open search, swipe up when nothing scrolls).
+//
+// Why not a plain SwipeGestureHandler around the ScrollView/ListView: the
+// handler delays the press (100ms) and, if the finger moves before that, the
+// press never reaches the scroll view, so quick flicks did nothing. Here the
+// handler is only enabled with the list at the top, and there it takes every
+// vertical swipe itself: down is the swipe, up scrolls the list by hand
+// (following the finger, then a fling). Once scrolled, the scroll view handles
+// the touch alone, as usual.
+export component TopSwipeArea inherits SwipeGestureHandler {
+    // Bound (<=>) to the scroll view's `viewport-y` (0 at the top, negative scrolled).
+    in-out property <length> scroll-y: 0;
+    // How far the list scrolls: content height - visible height (<= 0: it doesn't).
+    in property <length> scroll-range: 0;
+    // Off while something else owns the touch (an app being dragged...).
+    in property <bool> active: true;
+    // Minimum swipe for `swiped-down` / `swiped-up`.
+    in property <length> swipe-distance: 48px;
+
+    // Swipe down with the list at the top.
+    callback swiped-down();
+    // Swipe up when the list doesn't scroll.
+    callback swiped-up();
+
+    // The current swipe: 0 not decided yet, 1 scrolls the list, 2 a swipe.
+    property <int> mode: 0;
+    property <length> drag-origin;
+    property <length> last-y;
+    property <duration> last-tick;
+    // Finger speed in px per ms (negative: towards the end of the list).
+    property <float> velocity: 0;
+    property <bool> flinging: false;
+    // `scroll-y` as the fling left it: anything else means the list took over.
+    property <length> fling-y;
+
+    property <bool> can-scroll: root.scroll-range > 0;
+    property <length> dy: root.current-position.y - root.pressed-position.y;
+
+    // Stays on until the swipe that started at the top ends.
+    enabled: root.active && (root.scroll-y >= 0 || self.swiping);
+    handle-swipe-down: true;
+    handle-swipe-up: true;
+
+    moved => {
+        if !self.swiping {
+            return;
+        }
+        if root.mode == 0 {
+            root.flinging = false;
+            root.mode = root.dy < 0 && root.can-scroll ? 1 : 2;
+            root.drag-origin = self.current-position.y;
+            root.last-y = self.current-position.y;
+            root.last-tick = animation-tick();
+            root.velocity = 0;
+        }
+        if root.mode == 1 {
+            root.scroll-y = clamp(self.current-position.y - root.drag-origin, -root.scroll-range, 0);
+            let dt = (animation-tick() - root.last-tick) / 1ms;
+            if dt > 0 {
+                let v = (self.current-position.y - root.last-y) / 1px / dt;
+                root.velocity = 0.3 * root.velocity + 0.7 * v;
+                root.last-y = self.current-position.y;
+                root.last-tick = animation-tick();
+            }
+        }
+    }
+
+    swiped => {
+        if root.mode == 1 {
+            // A finger that stopped before lifting doesn't fling.
+            if animation-tick() - root.last-tick < 60ms && abs(root.velocity) > 0.1 {
+                root.fling-y = root.scroll-y;
+                root.flinging = true;
+            }
+        } else if root.mode == 2 {
+            if root.dy >= root.swipe-distance {
+                root.swiped-down();
+            } else if root.dy <= -root.swipe-distance && !root.can-scroll {
+                root.swiped-up();
+            }
+        }
+        root.mode = 0;
+    }
+
+    cancelled => {
+        root.mode = 0;
+    }
+
+    // Fling: keeps scrolling at the release speed, slowing down.
+    Timer {
+        interval: 16ms;
+        running: root.flinging;
+        triggered => {
+            if root.scroll-y != root.fling-y {
+                root.flinging = false;
+                return;
+            }
+            let y = clamp(root.scroll-y + root.velocity * 16px, -root.scroll-range, 0);
+            root.velocity = root.velocity * 0.95;
+            root.scroll-y = y;
+            root.fling-y = y;
+            if abs(root.velocity) < 0.02 || y >= 0 || y <= -root.scroll-range {
+                root.flinging = false;
+            }
+        }
+    }
+}
