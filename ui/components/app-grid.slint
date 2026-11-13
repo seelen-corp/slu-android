@@ -4,6 +4,7 @@ import { AppItem } from "../types.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
 import { FolderIcon } from "folder-icon.slint";
+import { IconBadge } from "badge.slint";
 
 export global GridMetrics {
     out property <relative-font-size> label-font-size: 0.875rem;
@@ -82,6 +83,9 @@ export component AppGridItem inherits AppItemBase {
                         apps: root.folder.apps;
                         pressed-index: root.pressed-folder-app;
                     }
+                    IconBadge {
+                        count: root.badge-count;
+                    }
                 }
             }
 
@@ -114,6 +118,7 @@ export component AppGrid inherits Rectangle {
     in property <bool> home-enabled: false;
     // The apps of a folder of Home.
     in property <bool> in-folder: false;
+    in property <bool> show-badges: false;
     in property <int> columns: 4;
 
     property <length> edge: AppsLayout.padding;
@@ -139,5 +144,6 @@ export component AppGrid inherits Rectangle {
         home-enabled: root.home-enabled;
         on-home: root.in-folder;
         in-folder: root.in-folder;
+        show-badge: root.show-badges;
     }
 }

@@ -444,6 +444,7 @@ component HomeGrid inherits HomeLayoutBase {
                     is-folder: item.is-folder;
                     folder: item.folder;
                     on-home: true;
+                    show-badge: true;
                     home-enabled: true;
                     draggable: true;
                     resizable-folder: true;
@@ -503,6 +504,7 @@ component HomeGrid inherits HomeLayoutBase {
                 folder: item.folder;
                 show-label: false;
                 on-home: true;
+                show-badge: true;
                 home-enabled: true;
                 draggable: true;
                 content-hidden: root.is-dragged(item);
@@ -673,6 +675,7 @@ component HomeList inherits HomeLayoutBase {
                     folder: item.folder;
                     show-icon: root.show-icon;
                     on-home: true;
+                    show-badge: true;
                     home-enabled: true;
                     draggable: true;
                     content-hidden: root.is-dragged(item);

@@ -99,6 +99,42 @@ impl AppsView {
     }
 }
 
+/// Where the notification badge of an app is drawn on Home: a corner of its
+/// icon. The text list (no icons) shows it left of the title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BadgePosition {
+    /// No badges.
+    Off,
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl BadgePosition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::TopLeft => "top_left",
+            Self::TopRight => "top_right",
+            Self::BottomLeft => "bottom_left",
+            Self::BottomRight => "bottom_right",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "top_left" => Some(Self::TopLeft),
+            "top_right" => Some(Self::TopRight),
+            "bottom_left" => Some(Self::BottomLeft),
+            "bottom_right" => Some(Self::BottomRight),
+            _ => None,
+        }
+    }
+}
+
 /// Shape of the app icons (see `icons.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum IconShape {
@@ -434,6 +470,8 @@ pub struct Config {
     pub apps_padding: u32,
     /// Lines of the app titles (see `LABEL_LINES_RANGE`).
     pub label_lines: u32,
+    /// Notification badges of the apps on Home.
+    pub badge_position: BadgePosition,
     /// Apps on Home. Entries of apps that are not installed are kept (they come
     /// back if the app is reinstalled, or mid-update when it's briefly gone),
     /// until the user edits Home.
@@ -456,6 +494,7 @@ impl Default for Config {
             item_size_text_list: AppsView::TextList.default_item_size(),
             apps_padding: DEFAULT_APPS_PADDING,
             label_lines: DEFAULT_LABEL_LINES,
+            badge_position: BadgePosition::default(),
             home: Vec::new(),
         }
     }
@@ -1155,6 +1194,11 @@ impl Config {
                         config.label_lines = n;
                     }
                 }
+                "badge_position" => {
+                    if let Some(position) = BadgePosition::parse(value) {
+                        config.badge_position = position;
+                    }
+                }
                 "home" => {
                     if let Some(entry) = parse_home_entry(value) {
                         config.home.push(entry);
@@ -1218,7 +1262,7 @@ impl Config {
 
     fn serialize(&self) -> String {
         let mut text = format!(
-            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\n",
+            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\n",
             self.launcher_screens.as_str(),
             self.apps_view.as_str(),
             self.swipe_down.as_str(),
@@ -1232,6 +1276,7 @@ impl Config {
             self.item_size_text_list,
             self.apps_padding,
             self.label_lines,
+            self.badge_position.as_str(),
         );
         for entry in &self.home {
             let slot = entry.slot.serialize();
@@ -1433,6 +1478,7 @@ mod tests {
         config.item_size_text_list = 96;
         config.apps_padding = 60;
         config.label_lines = 2;
+        config.badge_position = BadgePosition::BottomLeft;
         assert_eq!(Config::parse(&config.serialize()), config);
     }
 

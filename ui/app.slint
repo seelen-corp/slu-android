@@ -3,14 +3,14 @@ import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
 import { FolderPage } from "pages/folder.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "types.slint";
+import { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "types.slint";
 import { HomeActions, Interaction, LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
 export { AppsLayout } from "apps-layout.slint";
-export { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons }
+export { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
@@ -187,6 +187,8 @@ export component SettingsWindow inherits Window {
     in property <int> item-size: 80;
     in property <int> apps-padding: 8;
     in property <int> label-lines: 1;
+    in property <BadgePosition> badge-position: BadgePosition.top-right;
+    in property <bool> notification-access: false;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
@@ -198,6 +200,8 @@ export component SettingsWindow inherits Window {
     callback item-size-changed(value: int);
     callback apps-padding-changed(value: int);
     callback label-lines-changed(value: int);
+    callback badge-position-changed(value: BadgePosition);
+    callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
 
@@ -216,6 +220,8 @@ export component SettingsWindow inherits Window {
         item-size: root.item-size;
         apps-padding: root.apps-padding;
         label-lines: root.label-lines;
+        badge-position: root.badge-position;
+        notification-access: root.notification-access;
         launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
         apps-view-changed(value) => { root.apps-view-changed(value); }
         swipe-down-action-changed(value) => { root.swipe-down-action-changed(value); }
@@ -226,6 +232,8 @@ export component SettingsWindow inherits Window {
         item-size-changed(value) => { root.item-size-changed(value); }
         apps-padding-changed(value) => { root.apps-padding-changed(value); }
         label-lines-changed(value) => { root.label-lines-changed(value); }
+        badge-position-changed(value) => { root.badge-position-changed(value); }
+        open-notification-access => { root.open-notification-access(); }
         open-wallpaper-picker => { root.open-wallpaper-picker(); }
         open-default-launcher-settings => { root.open-default-launcher-settings(); }
     }

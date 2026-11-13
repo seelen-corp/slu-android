@@ -53,6 +53,15 @@ settings:
   label_lines_one: One line
   label_lines_two: Two lines
   unit_px: px
+  badges: Notification badges
+  badges_off: "Off"
+  badges_top_left: Top left
+  badges_top_right: Top right
+  badges_bottom_left: Bottom left
+  badges_bottom_right: Bottom right
+  notification_access: Notification access
+  notification_access_hint: Allow the launcher to read your notifications so apps on Home can show their badges.
+  allow: Allow
   wallpaper: Wallpaper
   default_launcher: Default home app
   change: Change

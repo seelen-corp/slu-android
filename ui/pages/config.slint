@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons } from "../types.slint";
+import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "../types.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { Select } from "../components/select.slint";
 import { Slider } from "../components/slider.slint";
@@ -88,6 +88,9 @@ export component ConfigPage inherits Rectangle {
     in property <int> apps-padding: 8;
     // Lines of the app titles (`LABEL_LINES_RANGE` in config.rs).
     in property <int> label-lines: 1;
+    in property <BadgePosition> badge-position: BadgePosition.top-right;
+    // The launcher may read the notifications (needed by the badges).
+    in property <bool> notification-access: false;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
@@ -99,6 +102,8 @@ export component ConfigPage inherits Rectangle {
     callback item-size-changed(value: int);
     callback apps-padding-changed(value: int);
     callback label-lines-changed(value: int);
+    callback badge-position-changed(value: BadgePosition);
+    callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
 
@@ -111,6 +116,14 @@ export component ConfigPage inherits Rectangle {
         IconShape.squircle,
         IconShape.teardrop,
         IconShape.rounded-square,
+    ];
+    // Choices of Settings > Notification badges, in the order of its options.
+    property <[BadgePosition]> badge-position-choices: [
+        BadgePosition.off,
+        BadgePosition.top-left,
+        BadgePosition.top-right,
+        BadgePosition.bottom-left,
+        BadgePosition.bottom-right,
     ];
     // Item size range of the current view (`AppsView::item_size_range` in config.rs).
     property <int> item-size-min: root.apps-view == AppsView.grid ? 32 : root.apps-view == AppsView.list ? 40 : 32;
@@ -284,6 +297,48 @@ export component ConfigPage inherits Rectangle {
                 maximum: 60;
                 value: root.apps-padding;
                 changed(value) => { root.apps-padding-changed(value); }
+            }
+
+            // Only Home shows the badges.
+            if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
+                label: I18n.t("settings.badges");
+
+                // Same order as `badge-position-choices`.
+                Select {
+                    options: [
+                        I18n.t("settings.badges_off"),
+                        I18n.t("settings.badges_top_left"),
+                        I18n.t("settings.badges_top_right"),
+                        I18n.t("settings.badges_bottom_left"),
+                        I18n.t("settings.badges_bottom_right"),
+                    ];
+                    current-index: root.badge-position == BadgePosition.top-left ? 1
+                        : root.badge-position == BadgePosition.top-right ? 2
+                        : root.badge-position == BadgePosition.bottom-left ? 3
+                        : root.badge-position == BadgePosition.bottom-right ? 4
+                        : 0;
+                    selected(index) => { root.badge-position-changed(root.badge-position-choices[index]); }
+                }
+            }
+
+            if root.launcher-screens == LauncherScreens.home-and-apps-menu && root.badge-position != BadgePosition.off: VerticalLayout {
+                spacing: Tokens.spacing-2xs;
+
+                SettingRow {
+                    label: I18n.t("settings.notification_access");
+
+                    Button {
+                        text: root.notification-access ? I18n.t("settings.change") : I18n.t("settings.allow");
+                        clicked => { root.open-notification-access(); }
+                    }
+                }
+
+                if !root.notification-access: Text {
+                    text: I18n.t("settings.notification_access_hint");
+                    font-size: 0.875rem;
+                    color: Tokens.slu-std-fg-secondary-color;
+                    wrap: word-wrap;
+                }
             }
 
             SectionTitle {

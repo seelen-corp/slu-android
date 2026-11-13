@@ -3,6 +3,8 @@ import { AppsLayout } from "../apps-layout.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
 import { FolderIcon } from "folder-icon.slint";
+import { Badge, IconBadge } from "badge.slint";
+import { BadgePosition } from "../types.slint";
 
 export global ListMetrics {
     out property <relative-font-size> label-font-size: 1.125rem;
@@ -52,16 +54,33 @@ export component AppListItem inherits AppItemBase {
         if root.show-icon: VerticalLayout {
             alignment: center;
 
-            if !root.is-folder: Image {
-                source: root.app.icon;
+            Rectangle {
                 width: ListMetrics.icon-size();
                 height: ListMetrics.icon-size();
                 visible: !root.content-hidden;
+
+                if !root.is-folder: Image {
+                    source: root.app.icon;
+                    width: 100%;
+                    height: 100%;
+                }
+                if root.is-folder: FolderIcon {
+                    apps: root.folder.apps;
+                    width: 100%;
+                    height: 100%;
+                }
+                IconBadge {
+                    count: root.badge-count;
+                }
             }
-            if root.is-folder: FolderIcon {
-                apps: root.folder.apps;
-                width: ListMetrics.icon-size();
-                height: ListMetrics.icon-size();
+        }
+
+        // No icon to put it on: left of the title.
+        if !root.show-icon && root.badge-count > 0 && AppsLayout.badge-position != BadgePosition.off: VerticalLayout {
+            alignment: center;
+
+            Badge {
+                count: root.badge-count;
                 visible: !root.content-hidden;
             }
         }

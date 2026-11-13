@@ -107,5 +107,21 @@
                 android:name="android.app.lib_name"
                 android:value="slu_launcher" />
         </activity>
+
+        <!--
+          Notification badges of the apps on Home (system-modules/badges.rs).
+          The system binds it only after the user allows the launcher's
+          notification access; it runs in the Home process (no android:process),
+          where the counts are shown.
+        -->
+        <service
+            android:name=".NotificationBadgeService"
+            android:label="Seelen UI Launcher"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

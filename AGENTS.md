@@ -53,7 +53,7 @@ Where things live:
 - Tokens: `ui/tokens.slint` (`Tokens` global: spacing, radius, gray scales, `slu-std-*`, `system-accent-*`, shadows).
   The accent is read from Android (`system-modules/theme.rs`, Material You tones on 12+) and set from Rust.
 - Standard components: `ui/components/` (`button`, `text-field`, `select`, `menu` = popover surface + items,
-  `wallpaper-label`). App entries share their touch behaviour through `app-item-base.slint`.
+  `wallpaper-label`, `badge` = notification badge). App entries share their touch behaviour through `app-item-base.slint`.
 
 Launcher-specific exception (maintainer-approved): Home and the Apps Menu draw directly over the **system wallpaper**
 (transparent window, wallpaper theme in the manifest). Text there uses `Tokens.wallpaper-fg-color`, picked from the

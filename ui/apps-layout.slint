@@ -1,3 +1,5 @@
+import { BadgePosition } from "types.slint";
+
 // Settings > Apps: size of the app items and padding around them, on Home and in
 // the Apps Menu. Set from Rust with the saved config. The spacing between items
 // is not a setting: it's the space left over, spread evenly.
@@ -13,4 +15,6 @@ export global AppsLayout {
     // The icon shape alone (Settings > Icon shape), white: folders are drawn in
     // it, tinted with a surface token. Empty in the text list (no icons).
     in property <image> icon-shape;
+    // Where Home shows the notification badges (Settings > Notification badges).
+    in property <BadgePosition> badge-position: BadgePosition.top-right;
 }

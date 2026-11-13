@@ -12,6 +12,8 @@ export component AppCollection inherits Rectangle {
     in property <bool> home-enabled: false;
     // The apps of a folder of Home (their menu acts on Home).
     in property <bool> in-folder: false;
+    // Notification badges (the apps of a folder of Home).
+    in property <bool> show-badges: false;
     // Grid view.
     in property <int> columns: 4;
     // Height of all the apps (with their padding), scrolled or not.
@@ -55,6 +57,7 @@ export component AppCollection inherits Rectangle {
                 home-enabled: root.home-enabled;
                 on-home: root.in-folder;
                 in-folder: root.in-folder;
+                show-badge: root.show-badges;
             }
         }
     }
@@ -71,6 +74,7 @@ export component AppCollection inherits Rectangle {
             apps: root.apps;
             home-enabled: root.home-enabled;
             in-folder: root.in-folder;
+            show-badges: root.show-badges;
             columns: root.columns;
         }
     }

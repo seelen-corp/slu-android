@@ -1,0 +1,41 @@
+import { Tokens } from "../tokens.slint";
+import { AppsLayout } from "../apps-layout.slint";
+import { BadgePosition } from "../types.slint";
+
+// Notification badge: an accent pill with the number of notifications of an app
+// (99+ above 99). Same look as the dock's badge of the desktop (`.weg-item-badge`).
+export component Badge inherits Rectangle {
+    in property <int> count;
+
+    property <length> side: Math.max(16px, label.preferred-height);
+
+    height: root.side;
+    width: Math.max(root.side, label.preferred-width + 2 * Tokens.spacing-2xs);
+    border-radius: Math.min(Tokens.radius-full, root.side / 2);
+    background: Tokens.slu-std-ui-color;
+
+    label := Text {
+        text: root.count > 99 ? "99+" : "\{root.count}";
+        font-size: 0.6875rem;
+        font-weight: 600;
+        color: Tokens.slu-std-ui-fg-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// The badge of an app icon, on the corner chosen in Settings
+// (`AppsLayout.badge-position`), a quarter of it outside the icon. Fills the
+// icon; draws nothing without notifications or with badges off.
+export component IconBadge inherits Rectangle {
+    in property <int> count;
+
+    property <bool> left: AppsLayout.badge-position == BadgePosition.top-left || AppsLayout.badge-position == BadgePosition.bottom-left;
+    property <bool> top: AppsLayout.badge-position == BadgePosition.top-left || AppsLayout.badge-position == BadgePosition.top-right;
+
+    if root.count > 0 && AppsLayout.badge-position != BadgePosition.off: Badge {
+        count: root.count;
+        x: root.left ? -self.width / 4 : root.width - self.width * 3 / 4;
+        y: root.top ? -self.height / 4 : root.height - self.height * 3 / 4;
+    }
+}

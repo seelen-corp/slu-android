@@ -6,9 +6,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use error::Result;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
-use system_modules::{activity, android_ctx, apps, config, icons, images, locale, system, theme};
+use system_modules::{
+    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme,
+};
 
 slint::include_modules!();
 
@@ -135,10 +137,47 @@ impl From<SwipeDownAction> for config::SwipeDownAction {
     }
 }
 
+impl From<config::BadgePosition> for BadgePosition {
+    fn from(value: config::BadgePosition) -> Self {
+        match value {
+            config::BadgePosition::Off => Self::Off,
+            config::BadgePosition::TopLeft => Self::TopLeft,
+            config::BadgePosition::TopRight => Self::TopRight,
+            config::BadgePosition::BottomLeft => Self::BottomLeft,
+            config::BadgePosition::BottomRight => Self::BottomRight,
+        }
+    }
+}
+
+impl From<BadgePosition> for config::BadgePosition {
+    fn from(value: BadgePosition) -> Self {
+        match value {
+            BadgePosition::Off => Self::Off,
+            BadgePosition::TopLeft => Self::TopLeft,
+            BadgePosition::TopRight => Self::TopRight,
+            BadgePosition::BottomLeft => Self::BottomLeft,
+            BadgePosition::BottomRight => Self::BottomRight,
+        }
+    }
+}
+
 impl AppItem {
     fn app_ref(&self) -> AppRef {
         AppRef::new(&self.package_name, &self.activity_name)
     }
+
+    /// Sets its notification count (`badges`). Returns whether it changed.
+    fn update_badge(&mut self) -> bool {
+        let count = badges::count(&self.package_name) as i32;
+        let changed = self.notifications != count;
+        self.notifications = count;
+        changed
+    }
+}
+
+/// Notifications of all the apps of a folder (its badge).
+fn folder_notifications(apps: &ModelRc<AppItem>) -> i32 {
+    apps.iter().map(|app| app.notifications).sum()
 }
 
 impl HomeItem {
@@ -385,6 +424,7 @@ fn refresh(window: &MainWindow) -> Result<()> {
         .map(|app| AppItem {
             icon: icon_size.map_or_else(slint::Image::default, |size| app_icon(&app, size, style)),
             pinned: config.is_on_home(&AppRef::new(&app.package_name, &app.activity_name)),
+            notifications: badges::count(&app.package_name) as i32,
             title: app.title.into(),
             package_name: app.package_name.into(),
             activity_name: app.activity_name.into(),
@@ -419,10 +459,12 @@ fn refresh(window: &MainWindow) -> Result<()> {
                     return None;
                 }
                 item.is_folder = true;
+                let apps = ModelRc::new(VecModel::from(apps));
                 item.folder = FolderItem {
                     id: folder.id as i32,
                     title: folder.title.as_str().into(),
-                    apps: ModelRc::new(VecModel::from(apps)),
+                    notifications: folder_notifications(&apps),
+                    apps,
                     large: folder.large,
                 };
             }
@@ -540,11 +582,53 @@ fn refresh(window: &MainWindow) -> Result<()> {
     layout.set_item_size(config.item_size(config.apps_view) as f32);
     layout.set_padding(config.apps_padding as f32);
     layout.set_label_lines(config.label_lines as i32);
+    layout.set_badge_position(config.badge_position.into());
 
     ALL_APPS.with_borrow_mut(|apps| *apps = items);
     SHOWN_CONFIG.with_borrow_mut(|shown| *shown = config);
     apply_search(window);
     Ok(())
+}
+
+/// The notification counts changed (`badges`): updates the entries of Home in
+/// place (the rest of the UI, e.g. a drag in progress, is left as it is).
+fn apply_badges(window: &MainWindow) {
+    fn update_apps(apps: &ModelRc<AppItem>) {
+        for i in 0..apps.row_count() {
+            if let Some(mut app) = apps.row_data(i)
+                && app.update_badge()
+            {
+                apps.set_row_data(i, app);
+            }
+        }
+    }
+    fn update_items(items: ModelRc<HomeItem>) {
+        for i in 0..items.row_count() {
+            let Some(mut item) = items.row_data(i) else {
+                continue;
+            };
+            let changed = if item.is_folder {
+                // Shared with the open folder view, if it's this one.
+                update_apps(&item.folder.apps);
+                let count = folder_notifications(&item.folder.apps);
+                let changed = item.folder.notifications != count;
+                item.folder.notifications = count;
+                changed
+            } else {
+                !item.is_picture && item.app.update_badge()
+            };
+            if changed {
+                items.set_row_data(i, item);
+            }
+        }
+    }
+    update_items(window.get_home_items());
+    update_items(window.get_dock_items());
+    update_items(window.get_home_list());
+    // Usually the same model as its entry's, already updated. The folder view
+    // doesn't show the folder's own badge: it's left as it is (a title being
+    // edited too).
+    update_apps(&window.get_open_folder().apps);
 }
 
 /// Applies a Home edit to the config and shows the result.
@@ -570,6 +654,17 @@ fn show_settings(window: &SettingsWindow, config: &config::Config) {
     window.set_item_size(config.item_size(config.apps_view) as i32);
     window.set_apps_padding(config.apps_padding as i32);
     window.set_label_lines(config.label_lines as i32);
+    window.set_badge_position(config.badge_position.into());
+}
+
+/// Whether the launcher may read notifications, in the Settings window (it's
+/// changed in the system settings: read again on resume).
+fn show_notification_access(window: &SettingsWindow) {
+    let granted = badges::access_granted().unwrap_or_else(|err| {
+        log::error!("failed to read the notification access: {err}");
+        false
+    });
+    window.set_notification_access(granted);
 }
 
 /// Settings change: saves it and shows the saved config.
@@ -585,11 +680,30 @@ fn save_setting(
     log_error(action, result.map(|_| ()));
 }
 
-fn run_settings(locale: &str) -> Result<()> {
+fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     let window = SettingsWindow::new()?;
     setup_i18n(window.global::<I18n>(), locale);
     apply_accent(window.global::<Tokens>());
     show_settings(&window, &config::load()?);
+    show_notification_access(&window);
+    let weak = window.as_weak();
+    *on_resume.borrow_mut() = Some(Box::new(move || {
+        weak.upgrade_in_event_loop(|window| show_notification_access(&window))
+            .ok();
+    }));
+
+    let weak = window.as_weak();
+    window.on_badge_position_changed(move |value| {
+        save_setting(&weak, "save badge position", |config| {
+            config.badge_position = value.into()
+        });
+    });
+    window.on_open_notification_access(|| {
+        log_error(
+            "open notification access settings",
+            system::open_notification_access_settings(),
+        )
+    });
 
     let weak = window.as_weak();
     window.on_launcher_screens_changed(move |value| {
@@ -677,12 +791,29 @@ fn run_settings(locale: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
+fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     let window = MainWindow::new()?;
     setup_i18n(window.global::<I18n>(), locale);
     refresh(&window)?;
-    *home_window.borrow_mut() = Some(window.as_weak());
+    // Back on screen (after opening an app, Settings, the wallpaper picker...):
+    // Settings runs in another process, so reload the config, and start again
+    // from Home.
+    let weak = window.as_weak();
+    *on_resume.borrow_mut() = Some(Box::new(move || {
+        weak.upgrade_in_event_loop(|window| {
+            log_error("refresh on resume", refresh(&window));
+            window.invoke_show_home();
+        })
+        .ok();
+    }));
     MAIN_WINDOW.with_borrow_mut(|main| *main = Some(window.as_weak()));
+
+    // Reported by `NotificationBadgeService` (Java thread).
+    let weak = window.as_weak();
+    badges::subscribe(move || {
+        weak.upgrade_in_event_loop(|window| apply_badges(&window))
+            .ok();
+    });
 
     let launcher = window.global::<LauncherActions>();
     launcher.on_open_settings(|| log_error("open settings", activity::open_settings()));
@@ -838,9 +969,10 @@ fn run_home(locale: &str, home_window: &HomeWindowCell) -> Result<()> {
     Ok(())
 }
 
-/// The main window, once created. Read by the lifecycle listener, which is
-/// installed before any window exists.
-type HomeWindowCell = std::rc::Rc<RefCell<Option<slint::Weak<MainWindow>>>>;
+/// What the window does when the activity is back on screen, set once it's
+/// created. Run by the lifecycle listener, which is installed before any
+/// window exists.
+type ResumeHook = std::rc::Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
 fn run(app: slint::android::AndroidApp) -> Result<()> {
     use slint::android::android_activity::{MainEvent, PollEvent};
@@ -850,28 +982,21 @@ fn run(app: slint::android::AndroidApp) -> Result<()> {
     config::init(app.internal_data_path())?;
     images::init(app.internal_data_path())?;
 
-    let home_window = HomeWindowCell::default();
-    let listener_window = home_window.clone();
+    let on_resume = ResumeHook::default();
+    let listener_hook = on_resume.clone();
     slint::android::init_with_event_listener(app, move |event| {
-        // Back on screen (after opening an app, Settings, the wallpaper picker...):
-        // Settings runs in another process, so reload the config, and start again
-        // from Home.
         if let PollEvent::Main(MainEvent::Resume { .. }) = event
-            && let Some(weak) = listener_window.borrow().as_ref()
+            && let Some(hook) = listener_hook.borrow().as_ref()
         {
-            weak.upgrade_in_event_loop(|window| {
-                log_error("refresh on resume", refresh(&window));
-                window.invoke_show_home();
-            })
-            .ok();
+            hook();
         }
     })?;
 
     let locale = current_locale();
     if activity::current_class_name()? == "SettingsActivity" {
-        run_settings(&locale)
+        run_settings(&locale, &on_resume)
     } else {
-        run_home(&locale, &home_window)
+        run_home(&locale, &on_resume)
     }
 }
 

@@ -10,6 +10,8 @@ export struct AppItem {
     uninstallable: bool,
     // On Home (grid or dock).
     pinned: bool,
+    // Its notifications (badge on Home); 0 without notification access.
+    notifications: int,
 }
 
 // Several apps in one slot of Home (`config::Folder`).
@@ -22,6 +24,8 @@ export struct FolderItem {
     // Enlarged: covers 2x2 cells of the Home grid (from its own, the top-left
     // one). Never in the dock; the list views show it like any folder.
     large: bool,
+    // Notifications of all its apps (its badge on Home).
+    notifications: int,
 }
 
 // An image picked by the user (`config::HomeImage`), on the Home grid only. It
@@ -97,4 +101,15 @@ export enum SwipeDownAction {
     search,
     // The system notifications panel.
     notifications,
+}
+
+// Settings > Notification badges (`config::BadgePosition`): the corner of the
+// app icons where Home shows their notification count. The text list (no
+// icons) shows it left of the title.
+export enum BadgePosition {
+    off,
+    top-left,
+    top-right,
+    bottom-left,
+    bottom-right,
 }

@@ -21,6 +21,13 @@ pub fn open_default_launcher_settings() -> Result<()> {
     start_action("android.settings.HOME_SETTINGS")
 }
 
+/// Opens the system "Notification access" settings, where the user allows the
+/// launcher to read notifications (badges, see `badges.rs`)
+/// (`Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`).
+pub fn open_notification_access_settings() -> Result<()> {
+    start_action("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+}
+
 /// Pulls down the notification shade. `StatusBarManager.expandNotificationsPanel`
 /// is not public API, but it's allowed for apps (with `EXPAND_STATUS_BAR`) and
 /// it's what launchers use for the swipe down on Home.

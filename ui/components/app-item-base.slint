@@ -30,12 +30,18 @@ export component AppItemBase inherits Rectangle {
     // A large folder of Home: tapping one of its app icons launches that app
     // (`folder-app-at`); tapping anywhere else opens the folder.
     in property <bool> folder-apps-clickable: false;
+    // Shows its notification badge (Home and its folders).
+    in property <bool> show-badge: false;
 
     // An app (not a folder or a picture).
     property <bool> is-app: !root.is-folder && !root.is-picture;
     // Title shown: the app's, or the folder's (its default if it has none).
     out property <string> title: !root.is-folder ? root.app.title
         : root.folder.title != "" ? root.folder.title : I18n.t("home.folder");
+    // Number on its badge (0: no badge): the app's notifications, or the ones of
+    // all the apps of the folder.
+    out property <int> badge-count: !root.show-badge || root.is-picture ? 0
+        : root.is-folder ? root.folder.notifications : root.app.notifications;
     // Touch is down on the entry (for the pressed overlay).
     out property <bool> pressed: touch.pressed;
     // A long press was recognized and the touch is still down.
