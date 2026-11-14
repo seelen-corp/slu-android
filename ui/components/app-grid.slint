@@ -5,6 +5,7 @@ import { AppItemBase } from "app-item-base.slint";
 import { WallpaperLabel } from "wallpaper-label.slint";
 import { FolderIcon } from "folder-icon.slint";
 import { IconBadge } from "badge.slint";
+import { DropLine, DropLineMetrics } from "drop-line.slint";
 
 export global GridMetrics {
     out property <relative-font-size> label-font-size: 0.875rem;
@@ -120,6 +121,20 @@ export component AppGrid inherits Rectangle {
     in property <bool> in-folder: false;
     in property <bool> show-badges: false;
     in property <int> columns: 4;
+    // Apps reordered by dragging them (long press, then move): `app-moved`.
+    // The drag state is shared (two-way) with whoever draws the dragged icon.
+    in property <bool> sortable: false;
+    in-out property <bool> dragging: false;
+    in-out property <AppItem> drag-app;
+    in-out property <int> drag-index: -1;
+    // Window coordinates.
+    in-out property <length> drag-x;
+    in-out property <length> drag-y;
+    // Moved beyond the tap slop (it will be dropped, not show its menu).
+    in-out property <bool> drag-confirmed: false;
+
+    // Dropped right before the app at `index` (the length: last).
+    callback app-moved(app: AppItem, index: int);
 
     property <length> edge: AppsLayout.padding;
     property <length> inner-width: Math.max(0, self.width - 2 * self.edge);
@@ -133,6 +148,31 @@ export component AppGrid inherits Rectangle {
 
     label-metrics := GridLabelMetrics { }
 
+    // Where the dragged app goes: the gap between cells nearest the finger, in
+    // the row under it (its absolute position already follows the scroll).
+    property <length> local-x: root.drag-x - root.absolute-position.x - root.edge;
+    property <length> local-y: root.drag-y - root.absolute-position.y - root.edge;
+    property <int> rows: Math.ceil(root.apps.length / Math.max(1, root.columns));
+    property <int> target-row: clamp(floor(root.local-y / Math.max(1px, root.cell-height + root.row-gap)), 0, Math.max(0, root.rows - 1));
+    property <int> target-gap: clamp(round(root.local-x / Math.max(1px, root.cell-width)), 0, root.columns);
+    property <int> insert-index: clamp(root.target-row * root.columns + root.target-gap, 0, root.apps.length);
+    // Column of the gap drawn (the end of the last row, or the start of the next).
+    property <int> line-col: root.insert-index - root.target-row * root.columns;
+
+    function end-drag(x: length, y: length) {
+        root.drag-x = x;
+        root.drag-y = y;
+        root.app-moved(root.drag-app, root.insert-index);
+        root.dragging = false;
+    }
+
+    if root.dragging && root.drag-confirmed: DropLine {
+        width: DropLineMetrics.thickness;
+        height: root.cell-height;
+        x: root.edge + root.line-col * root.cell-width - self.width / 2;
+        y: root.edge + root.target-row * (root.cell-height + root.row-gap);
+    }
+
     for app[index] in root.apps: AppGridItem {
         x: root.edge + Math.mod(index, root.columns) * root.cell-width;
         y: root.edge + Math.floor(index / root.columns) * (root.cell-height + root.row-gap);
@@ -145,5 +185,22 @@ export component AppGrid inherits Rectangle {
         on-home: root.in-folder;
         in-folder: root.in-folder;
         show-badge: root.show-badges;
+        draggable: root.sortable;
+        content-hidden: root.dragging && root.drag-index == index;
+        drag-started(x, y) => {
+            root.drag-app = app;
+            root.drag-index = index;
+            root.drag-x = x;
+            root.drag-y = y;
+            root.drag-confirmed = false;
+            root.dragging = true;
+        }
+        drag-confirmed => { root.drag-confirmed = true; }
+        drag-cancelled => { root.dragging = false; }
+        drag-moved(x, y) => {
+            root.drag-x = x;
+            root.drag-y = y;
+        }
+        drag-ended(x, y) => { root.end-drag(x, y); }
     }
 }

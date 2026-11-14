@@ -11,7 +11,8 @@ import { WallpaperLabel } from "../components/wallpaper-label.slint";
 
 // A folder of Home, opened: its title as the whole first row (a transparent
 // input, edited by tapping it), then its apps in the view chosen in Settings,
-// over the wallpaper (behind the scrim, like a modal). Tapping the background,
+// over the wallpaper (behind the scrim, like a modal). Long press an app to
+// reorder it (drag) or open its menu. Tapping the background,
 // swiping down (at the top) or Back closes it.
 export component FolderPage inherits Rectangle {
     in property <FolderItem> folder;
@@ -27,6 +28,7 @@ export component FolderPage inherits Rectangle {
     public function reset() {
         title-input.clear-focus();
         title-input.text = root.shown-title;
+        collection.cancel-drag();
         collection.scroll-to-top();
     }
 
@@ -64,7 +66,7 @@ export component FolderPage inherits Rectangle {
 
     // Swipe down with the apps at the top closes the folder.
     TopSwipeArea {
-        active: !Interaction.item-lifted;
+        active: !Interaction.item-lifted && !collection.dragging;
         scroll-y <=> collection.scroll-y;
         scroll-range: collection.scroll-range;
         swipe-distance: root.close-distance;
@@ -137,6 +139,9 @@ export component FolderPage inherits Rectangle {
                 home-enabled: true;
                 in-folder: true;
                 show-badges: true;
+                // In the folder's own order, which the user sets by dragging.
+                sortable: true;
+                app-moved(app, index) => { HomeActions.move-in-folder(root.folder.id, app, index); }
                 // Only as tall as its apps (it scrolls if they don't fit): the
                 // space below is background.
                 max-height: self.content-height;

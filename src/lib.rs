@@ -329,8 +329,9 @@ fn icon_size(config: &config::Config) -> Option<f32> {
     }
 }
 
-/// A widget being added: its grid cell (if any) and its size in cells.
-type PendingWidget = (Option<Slot>, (u32, u32));
+/// A widget being added: the Home page it goes on, its grid cell (if any) and
+/// its size in cells.
+type PendingWidget = (u32, Option<Slot>, (u32, u32));
 
 thread_local! {
     /// Rendered app icons by (package, activity, size, shape). Lives on the UI
@@ -352,10 +353,12 @@ thread_local! {
     /// The config shown by the last `refresh`, for the checks the UI makes while
     /// dragging (`HomeActions.can-move`, `can-resize-picture`).
     static SHOWN_CONFIG: RefCell<config::Config> = RefCell::new(config::Config::default());
-    /// Grid cell where the image being picked goes (`HomeActions.add-picture`).
-    static PICTURE_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
-    /// Grid cell where the widget picker was opened (`HomeActions.open-widget-picker`).
-    static WIDGET_PICKER_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
+    /// Page and grid cell where the image being picked goes
+    /// (`HomeActions.add-picture`).
+    static PICTURE_SLOT: Cell<(u32, Option<Slot>)> = const { Cell::new((0, None)) };
+    /// Page and grid cell where the widget picker was opened
+    /// (`HomeActions.open-widget-picker`).
+    static WIDGET_PICKER_SLOT: Cell<(u32, Option<Slot>)> = const { Cell::new((0, None)) };
     /// The widget being added (`HomeActions.add-widget`, until the system
     /// reports it bound): where it goes, and its cells.
     static PENDING_WIDGET: Cell<Option<PendingWidget>> = const { Cell::new(None) };
@@ -988,6 +991,8 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
                         set_widget_frame(&window, id, slint::Image::default());
                     }
                     WIDGET_FRAMES.with_borrow_mut(|frames| frames.clear());
+                    // Frames shown before this ran were just dropped too.
+                    log_error("redraw widgets", widgets::redraw());
                 })
                 .ok();
             }
@@ -1001,9 +1006,9 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     widgets::subscribe_added(move |id, provider| {
         let weak = weak.clone();
         slint::invoke_from_event_loop(move || {
-            let (cell, span) = PENDING_WIDGET.take().unwrap_or((None, (1, 1)));
+            let (page, cell, span) = PENDING_WIDGET.take().unwrap_or((0, None, (1, 1)));
             edit_home(&weak, "add widget", |config| {
-                config.add_widget(id, &provider, span, cell)
+                config.add_widget(id, &provider, span, page, cell)
             });
         })
         .ok();
@@ -1093,7 +1098,7 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     });
     home.on_add_picture(|page, col, row| {
         let cell = (page >= 0 && col >= 0 && row >= 0).then(|| slot(false, page, col, row));
-        PICTURE_SLOT.set(cell);
+        PICTURE_SLOT.set((to_index(page), cell));
         log_error("open the image picker", images::pick());
     });
     let weak = window.as_weak();
@@ -1136,15 +1141,17 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     let weak = window.as_weak();
     home.on_open_widget_picker(move |page, col, row| {
         let cell = (page >= 0 && col >= 0 && row >= 0).then(|| slot(false, page, col, row));
-        WIDGET_PICKER_SLOT.set(cell);
+        WIDGET_PICKER_SLOT.set((to_index(page), cell));
         if let Some(window) = weak.upgrade() {
             window.set_widget_picker_open(true);
             load_widget_providers(&window);
         }
     });
     home.on_add_widget(|provider| {
+        let (page, cell) = WIDGET_PICKER_SLOT.get();
         PENDING_WIDGET.set(Some((
-            WIDGET_PICKER_SLOT.get(),
+            page,
+            cell,
             (to_index(provider.columns), to_index(provider.rows)),
         )));
         log_error("add widget", widgets::add(&provider.component));
@@ -1180,6 +1187,17 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     home.on_resize_folder(move |id, large| {
         edit_home(&weak, "resize folder", |config| {
             config.resize_folder(to_index(id), large)
+        });
+    });
+    let weak = window.as_weak();
+    home.on_move_in_folder(move |id, app, index| {
+        edit_home(&weak, "reorder folder", |config| {
+            config.move_in_folder(
+                to_index(id),
+                &app.app_ref(),
+                to_index(index) as usize,
+                is_installed,
+            )
         });
     });
     let weak = window.as_weak();
@@ -1292,8 +1310,8 @@ pub extern "system" fn Java_com_seelen_slu_1launcher_HomeActivity_nativeOnImageP
         let Some(weak) = MAIN_WINDOW.with_borrow(|main| main.clone()) else {
             return;
         };
-        let cell = PICTURE_SLOT.take();
-        edit_home(&weak, "add picture", |config| config.add_image(&file, cell));
+        let (page, cell) = PICTURE_SLOT.take();
+        edit_home(&weak, "add picture", |config| config.add_image(&file, page, cell));
     })
     .ok();
 }

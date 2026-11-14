@@ -3,6 +3,8 @@ import { AppItem, AppsView } from "../types.slint";
 import { AppsLayout } from "../apps-layout.slint";
 import { AppListItem, ListLabelMetrics, ListMetrics } from "app-list-item.slint";
 import { AppGrid, GridLabelMetrics, GridMetrics } from "app-grid.slint";
+import { DropLine, DropLineMetrics } from "drop-line.slint";
+import { WallpaperLabel } from "wallpaper-label.slint";
 
 // Apps (the Apps Menu's, a folder's), in the view chosen in Settings (list, text list or grid),
 // scrollable, with the item size and padding of `AppsLayout`.
@@ -10,30 +12,87 @@ export component AppCollection inherits Rectangle {
     in property <[AppItem]> apps: [];
     in property <AppsView> view: AppsView.list;
     in property <bool> home-enabled: false;
-    // The apps of a folder of Home (their menu acts on Home).
+    // The apps of a folder of Home.
     in property <bool> in-folder: false;
     // Notification badges (the apps of a folder of Home).
     in property <bool> show-badges: false;
     // Grid view.
     in property <int> columns: 4;
+    // Apps reordered by dragging them (long press, then move): `app-moved`.
+    in property <bool> sortable: false;
     // Height of all the apps (with their padding), scrolled or not.
     out property <length> content-height: root.view == AppsView.grid
         ? GridMetrics.grid-height(root.width, root.columns, root.apps.length, AppsLayout.label-lines * grid-label.preferred-height)
-        : 2 * AppsLayout.padding + root.apps.length * ListMetrics.row-height(list-label.preferred-height);
+        : 2 * AppsLayout.padding + root.apps.length * root.row-height;
     // How far the apps scroll (<= 0: they fit). For `TopSwipeArea`.
     out property <length> scroll-range: root.content-height - root.height;
+    // An app is being dragged (until it's dropped or the drag is cancelled).
+    out property <bool> dragging: false;
 
     // The viewport-y of the list/grid (0 at the top, negative when scrolled).
     in-out property <length> scroll-y: 0;
 
+    // Dropped right before the app at `index` (the length: last).
+    callback app-moved(app: AppItem, index: int);
+
     public function scroll-to-top() {
         self.scroll-y = 0;
+    }
+
+    // Abort a drag in progress (e.g. the folder was closed).
+    public function cancel-drag() {
+        root.dragging = false;
     }
 
     vertical-stretch: 1;
 
     grid-label := GridLabelMetrics { }
     list-label := ListLabelMetrics { }
+
+    property <length> row-height: ListMetrics.row-height(list-label.preferred-height);
+    property <length> edge: AppsLayout.padding;
+
+    // Drag state (window coordinates), shared with the grid.
+    property <AppItem> drag-app;
+    property <int> drag-index: -1;
+    property <length> drag-x;
+    property <length> drag-y;
+    property <bool> drag-confirmed: false;
+
+    // List views: the gap between rows nearest the finger.
+    property <float> drag-rows: (root.drag-y - root.absolute-position.y - root.scroll-y - root.edge) / Math.max(1px, root.row-height);
+    property <int> insert-index: clamp(round(root.drag-rows), 0, root.apps.length);
+
+    // Near the top/bottom edge while dragging: scrolls that way.
+    property <length> scroll-zone: root.row-height / 2;
+    property <length> finger-y: root.drag-y - root.absolute-position.y;
+    property <int> scroll-direction: !root.dragging || !root.drag-confirmed || root.scroll-range <= 0 ? 0
+        : root.finger-y < root.scroll-zone && root.scroll-y < 0 ? 1
+        : root.finger-y > root.height - root.scroll-zone && root.scroll-y > -root.scroll-range ? -1 : 0;
+
+    function start-drag(app: AppItem, index: int, x: length, y: length) {
+        root.drag-app = app;
+        root.drag-index = index;
+        root.drag-x = x;
+        root.drag-y = y;
+        root.drag-confirmed = false;
+        root.dragging = true;
+    }
+
+    function end-list-drag(x: length, y: length) {
+        root.drag-x = x;
+        root.drag-y = y;
+        root.app-moved(root.drag-app, root.insert-index);
+        root.dragging = false;
+    }
+
+    Timer {
+        interval: 16ms;
+        running: root.scroll-direction != 0;
+        triggered => {
+            root.scroll-y = clamp(root.scroll-y + root.scroll-direction * 8px, -root.scroll-range, 0);
+        }
+    }
 
     // `mouse-drag-pan-enabled`: Slint's ScrollView/ListView ignore drags by
     // default, and that includes touch: without it they only scroll with a wheel.
@@ -58,7 +117,29 @@ export component AppCollection inherits Rectangle {
                 on-home: root.in-folder;
                 in-folder: root.in-folder;
                 show-badge: root.show-badges;
+                draggable: root.sortable;
+                content-hidden: root.dragging && root.drag-index == index;
+                drag-started(x, y) => { root.start-drag(app, index, x, y); }
+                drag-confirmed => { root.drag-confirmed = true; }
+                drag-cancelled => { root.dragging = false; }
+                drag-moved(x, y) => {
+                    root.drag-x = x;
+                    root.drag-y = y;
+                }
+                drag-ended(x, y) => { root.end-list-drag(x, y); }
             }
+        }
+    }
+
+    // List views: the insertion line over the rows (the ListView only takes rows).
+    if root.view != AppsView.grid && root.dragging && root.drag-confirmed: Rectangle {
+        clip: true;
+
+        DropLine {
+            x: root.edge;
+            y: root.edge + root.insert-index * root.row-height + root.scroll-y - self.height / 2;
+            width: Math.max(0, root.width - 2 * root.edge);
+            height: DropLineMetrics.thickness;
         }
     }
 
@@ -76,6 +157,38 @@ export component AppCollection inherits Rectangle {
             in-folder: root.in-folder;
             show-badges: root.show-badges;
             columns: root.columns;
+            sortable: root.sortable;
+            dragging <=> root.dragging;
+            drag-app <=> root.drag-app;
+            drag-index <=> root.drag-index;
+            drag-x <=> root.drag-x;
+            drag-y <=> root.drag-y;
+            drag-confirmed <=> root.drag-confirmed;
+            app-moved(app, index) => { root.app-moved(app, index); }
+        }
+    }
+
+    // The app being dragged, under the finger: only its icon (the text list has
+    // no icons, so there it's its title). The same size as in the view.
+    if root.dragging: Rectangle {
+        property <length> icon-size: root.view == AppsView.grid
+            ? GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - 2 * root.edge), root.columns))
+            : ListMetrics.icon-size();
+
+        width: Math.max(96px, AppsLayout.item-size);
+        height: Math.max(96px, AppsLayout.item-size);
+        x: root.drag-x - root.absolute-position.x - self.width / 2;
+        y: root.drag-y - root.absolute-position.y - self.height / 2;
+
+        if root.view != AppsView.text-list: Image {
+            source: root.drag-app.icon;
+            width: parent.icon-size;
+            height: parent.icon-size;
+        }
+        if root.view == AppsView.text-list: WallpaperLabel {
+            text: root.drag-app.title;
+            font-size: ListMetrics.label-font-size;
+            horizontal-alignment: center;
         }
     }
 }

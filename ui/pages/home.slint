@@ -11,6 +11,7 @@ import { MenuSurface, MenuItem } from "../components/menu.slint";
 import { WallpaperLabel } from "../components/wallpaper-label.slint";
 import { TopSwipeArea } from "../components/top-swipe-area.slint";
 import { FolderIcon } from "../components/folder-icon.slint";
+import { DropLine, DropLineMetrics } from "../components/drop-line.slint";
 import { HomePicture, PictureImage, ResizeHandle } from "../components/home-picture.slint";
 
 // Long press on an empty part of Home (opens the Home menu).
@@ -71,13 +72,6 @@ component PageDots inherits Rectangle {
         border-radius: root.dot / 2;
         background: Tokens.wallpaper-fg-color;
     }
-}
-
-// Insertion point of a reorder in the list views (drop target indicator).
-component DropLine inherits Rectangle {
-    height: 2px;
-    border-radius: 1px;
-    background: Tokens.system-accent-color;
 }
 
 // Shared drag state of Home, in window coordinates. Bound two-way by the grid
@@ -677,6 +671,7 @@ component HomeList inherits HomeLayoutBase {
                 }
 
                 if root.dragging && !root.merging: DropLine {
+                    height: DropLineMetrics.thickness;
                     x: root.edge;
                     y: root.edge + root.insert-index * root.row-height - self.height / 2;
                     width: Math.max(0, scroll.visible-width - 2 * root.edge);
@@ -968,7 +963,8 @@ export component HomePage inherits Rectangle {
                 text: I18n.t("home.add_picture");
                 icon: @image-url("../icons/IoImageOutline.svg");
                 activated => {
-                    HomeActions.add-picture(root.menu-page, root.menu-col, root.menu-row);
+                    // Outside the cells: on the page being shown.
+                    HomeActions.add-picture(root.menu-page >= 0 ? root.menu-page : root.current-page, root.menu-col, root.menu-row);
                     home-menu.close();
                 }
             }
@@ -977,7 +973,9 @@ export component HomePage inherits Rectangle {
                 text: I18n.t("home.add_widget");
                 icon: @image-url("../icons/IoAppsOutline.svg");
                 activated => {
-                    HomeActions.open-widget-picker(root.menu-page, root.menu-col, root.menu-row);
+                    // Outside the cells (e.g. the dock): no cell, but the widget
+                    // still goes on the page being shown.
+                    HomeActions.open-widget-picker(root.menu-page >= 0 ? root.menu-page : root.current-page, root.menu-col, root.menu-row);
                     home-menu.close();
                 }
             }

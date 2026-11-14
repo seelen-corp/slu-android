@@ -1,0 +1,12 @@
+import { Tokens } from "../tokens.slint";
+
+// Insertion point of a reorder (drop target indicator): a line between rows
+// (`height: DropLineMetrics.thickness`) or between grid cells (`width: ...`).
+export global DropLineMetrics {
+    out property <length> thickness: 2px;
+}
+
+export component DropLine inherits Rectangle {
+    border-radius: DropLineMetrics.thickness / 2;
+    background: Tokens.system-accent-color;
+}

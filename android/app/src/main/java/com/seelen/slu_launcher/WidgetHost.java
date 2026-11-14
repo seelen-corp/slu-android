@@ -76,6 +76,8 @@ final class WidgetHost {
     private static final Duration GPU_FENCE_TIMEOUT = Duration.ofMillis(500);
     /** Longest side of the previews shown in the widget picker. */
     private static final int PREVIEW_SIDE_DP = 160;
+    /** Lost frames of a widget drawn again in a row, at most. */
+    private static final int MAX_RETRIES = 30;
 
     /**
      * Implemented in Rust (widgets.rs): the widget {@code appWidgetId} of
@@ -407,6 +409,9 @@ final class WidgetHost {
             container.addView(view, new FrameLayout.LayoutParams(width, height));
         }
         view.resize(width, height);
+        // Home shows it again (e.g. its entry was rebuilt): it may have no
+        // frame yet, even at the same size.
+        view.scheduleCapture();
     }
 
     /** Removes a widget of Home: its view, and its id from the system. */
@@ -472,6 +477,8 @@ final class WidgetHost {
         long downTime;
         /** Not drawn: Rust held every free GPU frame ({@link #frameDone}). */
         boolean waitingForFrame;
+        /** Frames lost in a row ({@link #retryCapture}). */
+        private int retries;
         private final Runnable capture = this::capture;
         // Bitmap frames.
         private Bitmap bitmap;
@@ -584,11 +591,39 @@ final class WidgetHost {
                 return;
             }
             waitingForFrame = false;
+            int result;
             try {
-                gpu.draw(this);
+                result = gpu.draw(this);
             } catch (RuntimeException e) {
                 Log.w(TAG, "can't draw the widget " + id, e);
+                retryCapture();
+                return;
             }
+            // No frame came out of it (e.g. the first ones of a new renderer on
+            // a real GPU), or the views want another one: draw again, or the
+            // widget stays blank until it changes by itself.
+            if ((result & (HardwareRenderer.SYNC_FRAME_DROPPED
+                | HardwareRenderer.SYNC_LOST_SURFACE_REWARD_IF_FOUND
+                | HardwareRenderer.SYNC_CONTEXT_IS_STOPPED)) != 0) {
+                retryCapture();
+            } else if ((result & HardwareRenderer.SYNC_REDRAW_REQUESTED) != 0) {
+                scheduleCapture();
+            }
+        }
+
+        /** A frame was lost on its way to Rust: draws it again (a few times). */
+        void retryCapture() {
+            if (retries >= MAX_RETRIES) {
+                Log.w(TAG, "giving up drawing the widget " + id + " again");
+                return;
+            }
+            retries++;
+            scheduleCapture();
+        }
+
+        /** A frame reached Rust. */
+        void frameDelivered() {
+            retries = 0;
         }
 
         private void captureBitmap() {
@@ -678,14 +713,15 @@ final class WidgetHost {
             return held.size() < MAX_IMAGES - 1;
         }
 
-        void draw(View view) {
+        /** Returns the {@code HardwareRenderer.SYNC_*} flags of the frame. */
+        int draw(View view) {
             RecordingCanvas canvas = node.beginRecording(width, height);
             try {
                 view.draw(canvas);
             } finally {
                 node.endRecording();
             }
-            renderer.createRenderRequest().syncAndDraw();
+            return renderer.createRenderRequest().syncAndDraw();
         }
 
         @Override
@@ -698,6 +734,7 @@ final class WidgetHost {
                 image = reader.acquireLatestImage();
             } catch (IllegalStateException e) {
                 Log.w(TAG, "no image free for the widget " + id, e);
+                retry();
                 return;
             }
             if (image == null) {
@@ -705,17 +742,35 @@ final class WidgetHost {
             }
             if (!awaitDrawn(image)) {
                 image.close();
+                retry();
                 return;
             }
             HardwareBuffer buffer = image.getHardwareBuffer();
             if (buffer == null) {
                 image.close();
+                retry();
                 return;
             }
             int seq = nextSeq++;
             held.put(seq, image);
+            WidgetView view = views.get(id);
+            if (view != null && view.gpu == this) {
+                view.frameDelivered();
+            }
             nativeOnWidgetBuffer(id, seq, width, height, buffer);
             buffer.close();
+        }
+
+        /**
+         * This frame never reached Rust: without another one the widget stays
+         * blank (a new widget draws only a few frames, unlike on startup, where
+         * they're all drawn again once Slint's renderer is set up).
+         */
+        private void retry() {
+            WidgetView view = views.get(id);
+            if (view != null && view.gpu == this) {
+                view.retryCapture();
+            }
         }
 
         /**

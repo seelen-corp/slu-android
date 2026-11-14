@@ -250,6 +250,15 @@ pub enum Slot {
 }
 
 impl Slot {
+    /// Its grid page; the dock counts as the first one (where entries leaving
+    /// it go, see `Config::relocate`).
+    fn grid_page(&self) -> u32 {
+        match *self {
+            Slot::Grid { page, .. } => page,
+            Slot::Dock { .. } => 0,
+        }
+    }
+
     fn serialize(&self) -> String {
         match *self {
             Slot::Grid { page, row, col } => format!("grid,{page},{row},{col}"),
@@ -592,28 +601,51 @@ impl Config {
         !self.home.iter().any(|entry| entry.covers(cell))
     }
 
-    /// The first free grid cell, page by page.
-    fn first_free_cell(&self) -> Slot {
-        self.first_free_area((1, 1))
-    }
-
-    /// The first grid slot, page by page, where `span` cells are free (`span`
-    /// reduced to the grid size, see `clamped_span`).
-    fn first_free_area(&self, span: (u32, u32)) -> Slot {
-        let (columns, rows) = self.clamped_span(span);
-        (0..)
-            .flat_map(|page| {
-                (0..=self.home_rows - rows).flat_map(move |row| {
-                    (0..=self.home_columns - columns).map(move |col| Slot::Grid { page, row, col })
-                })
+    /// The first slot of grid page `page` where `span` cells (already
+    /// clamped, see `clamped_span`) are free of every entry but `except`.
+    fn free_area_on(
+        &self,
+        page: u32,
+        (columns, rows): (u32, u32),
+        except: &EntryKey,
+    ) -> Option<Slot> {
+        (0..=self.home_rows.saturating_sub(rows))
+            .flat_map(|row| {
+                (0..=self.home_columns.saturating_sub(columns))
+                    .map(move |col| Slot::Grid { page, row, col })
             })
             .find(|&slot| {
-                !self
-                    .home
-                    .iter()
-                    .any(|entry| entry.overlaps(slot, (columns, rows)))
+                !self.home.iter().any(|entry| {
+                    entry.content.key() != *except && entry.overlaps(slot, (columns, rows))
+                })
             })
-            .expect("there is always a free area")
+    }
+
+    /// The standard way to find room for an entry of Home: moves it to free
+    /// cells of grid page `page`, or of the next pages, or of a new page after
+    /// the last; never to an earlier page. Where it is now doesn't count as
+    /// taken. Pages aren't compacted. Returns whether the entry is on Home.
+    fn relocate(&mut self, key: &EntryKey, page: u32) -> bool {
+        let Some(index) = self.position(key) else {
+            return false;
+        };
+        let span = self.clamped_span(self.home[index].content.span());
+        let slot = (page..)
+            .find_map(|page| self.free_area_on(page, span, key))
+            .expect("a page past the last one is empty");
+        self.home[index].slot = slot;
+        true
+    }
+
+    /// Adds an entry (not on Home yet) on free cells of page `page` or the next
+    /// ones (`relocate`).
+    fn push_relocated(&mut self, content: HomeContent, page: u32) {
+        let key = content.key();
+        self.home.push(HomeEntry {
+            content,
+            slot: Slot::Grid { page, row: 0, col: 0 },
+        });
+        self.relocate(&key, page);
     }
 
     /// `span` reduced to fit the grid, at least one cell.
@@ -639,15 +671,15 @@ impl Config {
         }
     }
 
-    /// Puts an app in the first free grid cell (no-op if it's already on Home).
+    /// Puts an app in the first free grid cell, from the first page
+    /// (`relocate`). No-op if it's already on Home.
     pub fn add_to_home(&mut self, app: AppRef, installed: impl Fn(&AppRef) -> bool) {
         if !installed(&app) {
             return;
         }
         self.drop_uninstalled(&installed);
         if !self.is_on_home(&app) {
-            let slot = self.first_free_cell();
-            self.home.push(HomeEntry::app(app, slot));
+            self.push_relocated(HomeContent::App(app), 0);
         }
         self.compact_pages();
     }
@@ -683,7 +715,7 @@ impl Config {
 
     /// Moves an entry of Home to `slot` (see `can_move`). The entries it lands
     /// on go to the cells it left (for a single cell, both swap places), or to
-    /// the first free cells when those are taken.
+    /// free cells of its page or the next ones (`relocate`) when those are taken.
     pub fn move_to(&mut self, key: &EntryKey, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
         self.drop_uninstalled(&installed);
         if !self.can_move(key, slot) {
@@ -694,19 +726,25 @@ impl Config {
         };
         let span = self.home[from].content.span();
         let old_cells = self.home[from].cells();
-        let displaced: Vec<usize> = (0..self.home.len())
+        let page = slot.grid_page();
+        let displaced: Vec<EntryKey> = (0..self.home.len())
             .filter(|&i| i != from && self.home[i].overlaps(slot, span))
+            .map(|i| self.home[i].content.key())
             .collect();
         self.home[from].slot = slot;
         // The displaced entries (single cells) are inside the moved one's new
         // area, so they never take each other's new cell.
-        for i in displaced {
-            let target = old_cells
-                .iter()
-                .copied()
-                .find(|&cell| self.is_free(cell))
-                .unwrap_or_else(|| self.first_free_cell());
-            self.home[i].slot = target;
+        for key in displaced {
+            match old_cells.iter().copied().find(|&cell| self.is_free(cell)) {
+                Some(cell) => {
+                    if let Some(i) = self.position(&key) {
+                        self.home[i].slot = cell;
+                    }
+                }
+                None => {
+                    self.relocate(&key, page);
+                }
+            }
         }
         self.compact_pages();
     }
@@ -747,28 +785,32 @@ impl Config {
         self.compact_pages();
     }
 
-    /// Takes an app out of its folder, to the first free grid cell.
+    /// Takes an app out of its folder, to free cells of the folder's page or the
+    /// next ones (`relocate`).
     pub fn remove_from_folder(&mut self, app: &AppRef, installed: impl Fn(&AppRef) -> bool) {
         self.drop_uninstalled(&installed);
-        let mut found = false;
+        // The page of its folder (the first one for the dock).
+        let mut page = None;
         for entry in &mut self.home {
             if let HomeContent::Folder(folder) = &mut entry.content {
                 let before = folder.apps.len();
                 folder.apps.retain(|a| a != app);
-                found |= folder.apps.len() != before;
+                if folder.apps.len() != before {
+                    page = Some(entry.slot.grid_page());
+                }
             }
         }
-        if !found {
+        let Some(page) = page else {
             return;
-        }
+        };
         self.dissolve_small_folders();
-        let slot = self.first_free_cell();
-        self.home.push(HomeEntry::app(app.clone(), slot));
+        self.push_relocated(HomeContent::App(app.clone()), page);
         self.compact_pages();
     }
 
     /// Removes a folder, putting its apps back on Home: the first one in the
-    /// folder's slot, the others in the first free grid cells.
+    /// folder's slot, the others on free cells of its page or the next ones
+    /// (`relocate`).
     pub fn disband_folder(&mut self, id: u32, installed: impl Fn(&AppRef) -> bool) {
         self.drop_uninstalled(&installed);
         let Some(index) = self.position(&EntryKey::Folder(id)) else {
@@ -778,6 +820,7 @@ impl Config {
             return;
         };
         let mut apps = std::mem::take(&mut folder.apps).into_iter();
+        let page = self.home[index].slot.grid_page();
         match apps.next() {
             Some(first) => self.home[index].content = HomeContent::App(first),
             None => {
@@ -785,10 +828,31 @@ impl Config {
             }
         }
         for app in apps {
-            let slot = self.first_free_cell();
-            self.home.push(HomeEntry::app(app, slot));
+            self.push_relocated(HomeContent::App(app), page);
         }
         self.compact_pages();
+    }
+
+    /// Moves an app of a folder right before the one at `index` of its
+    /// (installed) apps; the length puts it last.
+    pub fn move_in_folder(
+        &mut self,
+        id: u32,
+        app: &AppRef,
+        index: usize,
+        installed: impl Fn(&AppRef) -> bool,
+    ) {
+        self.drop_uninstalled(&installed);
+        for entry in &mut self.home {
+            if let HomeContent::Folder(folder) = &mut entry.content
+                && folder.id == id
+                && let Some(from) = folder.apps.iter().position(|a| a == app)
+            {
+                let moved = folder.apps.remove(from);
+                let index = if index > from { index - 1 } else { index };
+                folder.apps.insert(index.min(folder.apps.len()), moved);
+            }
+        }
     }
 
     pub fn rename_folder(&mut self, id: u32, title: &str) {
@@ -851,8 +915,8 @@ impl Config {
     }
 
     /// Enlarges a folder to 2x2 cells (see `large_folder_slot`; the single-cell
-    /// entries there go to the first free cells) or shrinks it back to its
-    /// top-left cell.
+    /// entries there go to free cells of the same page, or of the next ones, see
+    /// `relocate`) or shrinks it back to its top-left cell.
     pub fn resize_folder(&mut self, id: u32, large: bool) {
         if !self.can_resize_folder(id, large) {
             return;
@@ -864,15 +928,16 @@ impl Config {
             let Some(slot) = self.large_folder_slot(index) else {
                 return;
             };
-            let displaced: Vec<usize> = (0..self.home.len())
+            let displaced: Vec<EntryKey> = (0..self.home.len())
                 .filter(|&i| i != index && self.home[i].overlaps(slot, LARGE_FOLDER_SPAN))
+                .map(|i| self.home[i].content.key())
                 .collect();
             self.home[index].slot = slot;
             if let HomeContent::Folder(folder) = &mut self.home[index].content {
                 folder.large = true;
             }
-            for i in displaced {
-                self.home[i].slot = self.first_free_cell();
+            for key in displaced {
+                self.relocate(&key, slot.grid_page());
             }
         } else if let HomeContent::Folder(folder) = &mut self.home[index].content {
             folder.large = false;
@@ -903,8 +968,9 @@ impl Config {
     }
 
     /// Puts an image file (of the images directory) on the grid, one cell big:
-    /// at `preferred` if that cell is free, otherwise in the first free one.
-    pub fn add_image(&mut self, file: &str, preferred: Option<Slot>) {
+    /// at `preferred` if that cell is free, otherwise on free cells of `page`
+    /// or the next ones (`relocate`).
+    pub fn add_image(&mut self, file: &str, page: u32, preferred: Option<Slot>) {
         if !valid_image_file(file) {
             return;
         }
@@ -914,10 +980,10 @@ impl Config {
             columns: 1,
             rows: 1,
         });
-        let slot = preferred
-            .filter(|&slot| self.fits(&content, slot) && self.is_free(slot))
-            .unwrap_or_else(|| self.first_free_cell());
-        self.home.push(HomeEntry { content, slot });
+        match preferred.filter(|&slot| self.fits(&content, slot) && self.is_free(slot)) {
+            Some(slot) => self.home.push(HomeEntry { content, slot }),
+            None => self.push_relocated(content, page),
+        }
         self.compact_pages();
     }
 
@@ -934,12 +1000,14 @@ impl Config {
 
     /// Puts a widget (already bound to its provider, see `widgets.rs`) on the
     /// grid, `span` cells big (reduced to the grid): at `preferred` if those
-    /// cells are free, otherwise in the first free area. No-op if it's there.
+    /// cells are free, otherwise on free cells of `page` or the next ones
+    /// (`relocate`). No-op if it's there.
     pub fn add_widget(
         &mut self,
         id: u32,
         provider: &str,
         span: (u32, u32),
+        page: u32,
         preferred: Option<Slot>,
     ) {
         if self.position(&EntryKey::Widget(id)).is_some() {
@@ -952,16 +1020,17 @@ impl Config {
             columns,
             rows,
         });
-        let slot = preferred
-            .filter(|&slot| {
-                self.fits(&content, slot)
-                    && !self
-                        .home
-                        .iter()
-                        .any(|entry| entry.overlaps(slot, (columns, rows)))
-            })
-            .unwrap_or_else(|| self.first_free_area((columns, rows)));
-        self.home.push(HomeEntry { content, slot });
+        let preferred = preferred.filter(|&slot| {
+            self.fits(&content, slot)
+                && !self
+                    .home
+                    .iter()
+                    .any(|entry| entry.overlaps(slot, (columns, rows)))
+        });
+        match preferred {
+            Some(slot) => self.home.push(HomeEntry { content, slot }),
+            None => self.push_relocated(content, page),
+        }
         self.compact_pages();
     }
 
@@ -1156,8 +1225,7 @@ impl Config {
         }
         self.home = kept;
         for content in misplaced {
-            let slot = self.first_free_area(content.span());
-            self.home.push(HomeEntry { content, slot });
+            self.push_relocated(content, 0);
         }
         self.dissolve_small_folders();
         self.compact_pages();
@@ -1342,8 +1410,7 @@ impl Config {
         }
         for app in legacy_pinned {
             if !config.is_on_home(&app) {
-                let slot = config.first_free_cell();
-                config.home.push(HomeEntry::app(app, slot));
+                config.push_relocated(HomeContent::App(app), 0);
             }
         }
         config
@@ -1807,6 +1874,28 @@ mod tests {
     }
 
     #[test]
+    fn move_in_folder_inserts_before() {
+        let mut config = Config::default();
+        for n in 1..=4 {
+            config.add_to_home(app(n), all);
+        }
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config.merge_into(&key(3), cell(0, 0, 0), all);
+        config.merge_into(&key(4), cell(0, 0, 0), all);
+        let id = folder(&config, cell(0, 0, 0)).unwrap().id;
+        let apps = |config: &Config| folder(config, cell(0, 0, 0)).unwrap().apps.clone();
+        config.move_in_folder(id, &app(1), 4, all);
+        assert_eq!(apps(&config), vec![app(2), app(3), app(4), app(1)]);
+        config.move_in_folder(id, &app(1), 0, all);
+        assert_eq!(apps(&config), vec![app(1), app(2), app(3), app(4)]);
+        // Right before or after itself: no change.
+        config.move_in_folder(id, &app(2), 2, all);
+        assert_eq!(apps(&config), vec![app(1), app(2), app(3), app(4)]);
+        config.move_in_folder(id, &app(3), 1, all);
+        assert_eq!(apps(&config), vec![app(1), app(3), app(2), app(4)]);
+    }
+
+    #[test]
     fn rename_folder_keeps_one_line() {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
@@ -1847,7 +1936,7 @@ mod tests {
     #[test]
     fn image_roundtrip_and_bad_files() {
         let mut config = Config::default();
-        config.add_image("img-1.jpg", Some(cell(0, 1, 1)));
+        config.add_image("img-1.jpg", 0, Some(cell(0, 1, 1)));
         config.resize(&EntryKey::Image(0), 2, 3);
         assert_eq!(image_at(&config, 0), (cell(0, 1, 1), (2, 3)));
         assert_eq!(Config::parse(&config.serialize()), config);
@@ -1863,10 +1952,10 @@ mod tests {
     #[test]
     fn widget_roundtrip_resize_and_remove() {
         let mut config = Config::default();
-        config.add_widget(42, "com.example/.ClockWidget", (2, 2), Some(cell(0, 1, 1)));
+        config.add_widget(42, "com.example/.ClockWidget", (2, 2), 0, Some(cell(0, 1, 1)));
         assert_eq!(widget_at(&config, 42), (cell(0, 1, 1), (2, 2)));
         // Already there: nothing changes.
-        config.add_widget(42, "com.example/.ClockWidget", (1, 1), None);
+        config.add_widget(42, "com.example/.ClockWidget", (1, 1), 0, None);
         assert_eq!(config.widget_ids(), vec![42]);
         assert!(config.can_resize(&EntryKey::Widget(42), 3, 1));
         config.resize(&EntryKey::Widget(42), 3, 1);
@@ -1885,10 +1974,10 @@ mod tests {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
         // Its cells are taken: the first free area instead.
-        config.add_widget(1, "a/.W", (2, 1), Some(cell(0, 0, 0)));
+        config.add_widget(1, "a/.W", (2, 1), 0, Some(cell(0, 0, 0)));
         assert_eq!(widget_at(&config, 1), (cell(0, 0, 1), (2, 1)));
         // Reduced to the grid.
-        config.add_widget(2, "a/.W", (99, 99), None);
+        config.add_widget(2, "a/.W", (99, 99), 0, None);
         assert_eq!(
             widget_at(&config, 2).1,
             (DEFAULT_HOME_COLUMNS, DEFAULT_HOME_ROWS)
@@ -1901,22 +1990,47 @@ mod tests {
     }
 
     #[test]
+    fn widget_added_to_the_current_page_or_a_new_one() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_widget(1, "a/.W", (1, 1), 1, Some(cell(1, 0, 0)));
+        // On the current page (1), not on the first one with room.
+        config.add_widget(2, "a/.W", (2, 1), 1, None);
+        assert_eq!(widget_at(&config, 2), (cell(1, 0, 1), (2, 1)));
+        // The current page is full: a new page.
+        let full = (DEFAULT_HOME_COLUMNS, DEFAULT_HOME_ROWS);
+        config.add_widget(3, "a/.W", full, 1, None);
+        assert_eq!(widget_at(&config, 3), (cell(2, 0, 0), full));
+    }
+
+    #[test]
+    fn image_added_to_the_current_page() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_image("a.png", 1, Some(cell(1, 0, 0)));
+        // No cell: on the page it was asked from, not on the first one.
+        config.add_image("b.png", 1, None);
+        let slot = config.home[config.position(&EntryKey::Image(1)).unwrap()].slot;
+        assert_eq!(slot, cell(1, 0, 1));
+    }
+
+    #[test]
     fn image_added_to_the_pressed_cell_or_the_first_free_one() {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
-        config.add_image("a.png", Some(cell(0, 0, 0)));
+        config.add_image("a.png", 0, Some(cell(0, 0, 0)));
         assert_eq!(image_at(&config, 0).0, cell(0, 0, 1));
-        config.add_image("b.png", Some(cell(0, 3, 2)));
+        config.add_image("b.png", 0, Some(cell(0, 3, 2)));
         assert_eq!(image_at(&config, 1).0, cell(0, 3, 2));
         // Never in the dock.
-        config.add_image("c.png", Some(Slot::Dock { col: 0 }));
+        config.add_image("c.png", 0, Some(Slot::Dock { col: 0 }));
         assert_eq!(image_at(&config, 2).0, cell(0, 0, 2));
     }
 
     #[test]
     fn image_resize_needs_free_cells_inside_the_grid() {
         let mut config = Config::default();
-        config.add_image("a.png", None);
+        config.add_image("a.png", 0, None);
         config.add_to_home(app(1), all);
         // Image at (0,0,0), app at (0,0,1).
         assert!(!config.can_resize(&EntryKey::Image(0), 2, 1));
@@ -1935,7 +2049,7 @@ mod tests {
     #[test]
     fn apps_dont_move_onto_images() {
         let mut config = Config::default();
-        config.add_image("a.png", None);
+        config.add_image("a.png", 0, None);
         config.resize(&EntryKey::Image(0), 2, 2);
         config.add_to_home(app(1), all);
         // App at (0,0,2).
@@ -1949,7 +2063,7 @@ mod tests {
     #[test]
     fn moved_image_displaces_apps_into_its_old_cells() {
         let mut config = Config::default();
-        config.add_image("a.png", None);
+        config.add_image("a.png", 0, None);
         config.resize(&EntryKey::Image(0), 2, 1);
         config.add_to_home(app(1), all);
         config.add_to_home(app(2), all);
@@ -1970,7 +2084,7 @@ mod tests {
     fn images_stay_out_of_the_list() {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
-        config.add_image("a.png", None);
+        config.add_image("a.png", 0, None);
         config.add_to_home(app(2), all);
         assert_eq!(config.list_order().len(), 2);
         config.move_to_index(&key(2), 0, all);
@@ -2062,9 +2176,68 @@ mod tests {
     }
 
     #[test]
+    fn enlarged_folder_pushes_entries_to_its_page_or_later_ones() {
+        // Room on page 0, folder on page 1 with an app right below it.
+        let mut config = Config::parse(
+            "home=grid,0,0,0,p1/p1.Main
+folder=grid,1,0,0,0,F
+folder_app=0,p2/p2.Main
+folder_app=0,p3/p3.Main
+home=grid,1,1,0,p4/p4.Main
+",
+        );
+        config.resize_folder(0, true);
+        assert_eq!(folder_at(&config, 0), (cell(1, 0, 0), (2, 2)));
+        // Same page, not the first free cell of page 0.
+        let slot = config.home[config.position(&key(4)).unwrap()].slot;
+        assert_eq!(slot, cell(1, 0, 2));
+    }
+
+    #[test]
+    fn relocate_never_goes_to_an_earlier_page() {
+        // Page 0 has room, page 1 is full, page 2 has room.
+        let full = (DEFAULT_HOME_COLUMNS, DEFAULT_HOME_ROWS);
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.add_widget(1, "a/.W", full, 1, None);
+        config.add_to_home(app(2), all);
+        config.move_to(&key(2), cell(2, 0, 0), all);
+        let slot_of = |config: &Config, key: &EntryKey| {
+            config.home[config.position(key).unwrap()].slot
+        };
+        // Its own page when there's room.
+        assert!(config.relocate(&key(1), 0));
+        assert_eq!(slot_of(&config, &key(1)), cell(0, 0, 0));
+        // Page 1 is full: the next one with room.
+        config.relocate(&key(1), 1);
+        assert_eq!(slot_of(&config, &key(1)), cell(2, 0, 1));
+        // Past the last page: a new one.
+        let widget = EntryKey::Widget(1);
+        config.relocate(&widget, 2);
+        assert_eq!(slot_of(&config, &widget), cell(3, 0, 0));
+        // Not on Home.
+        assert!(!config.relocate(&key(9), 0));
+    }
+
+    #[test]
+    fn folder_apps_come_out_on_the_folder_page() {
+        // Room on page 0, folder on page 1.
+        let text = "home=grid,0,0,0,p1/p1.Main\nfolder=grid,1,0,0,0,F\nfolder_app=0,p2/p2.Main\nfolder_app=0,p3/p3.Main\nfolder_app=0,p4/p4.Main\n";
+        let slot_of = |config: &Config, n| config.home[config.position(&key(n)).unwrap()].slot;
+        let mut config = Config::parse(text);
+        config.remove_from_folder(&app(4), all);
+        assert_eq!(slot_of(&config, 4), cell(1, 0, 1));
+        let mut config = Config::parse(text);
+        config.disband_folder(0, all);
+        assert_eq!(slot_of(&config, 2), cell(1, 0, 0));
+        assert_eq!(slot_of(&config, 3), cell(1, 0, 1));
+        assert_eq!(slot_of(&config, 4), cell(1, 0, 2));
+    }
+
+    #[test]
     fn large_folders_stay_out_of_the_dock_and_images() {
         let mut config = with_folder(2);
-        config.add_image("a.png", Some(cell(0, 0, 1)));
+        config.add_image("a.png", 0, Some(cell(0, 0, 1)));
         // Only up or left of the image: the folder's cell is on the top row.
         assert!(!config.can_resize_folder(0, true));
         config.move_to(&EntryKey::Folder(0), Slot::Dock { col: 0 }, all);
