@@ -769,6 +769,15 @@ pub fn before_rendering() {
     });
 }
 
+/// After Slint drew a frame (rendering notifier): the buffers still in flight
+/// go back to Java once the GPU is done with them. Without this, a buffer whose
+/// conversion wasn't finished in `before_rendering` (common on real GPUs) is
+/// held until Slint draws again, which may never happen: with every buffer
+/// held, Java stops drawing the widget.
+pub fn after_rendering() {
+    STATE.with_borrow_mut(|state| state.release_done(true));
+}
+
 /// Slint's context is going away (rendering notifier, with it current): so do
 /// the textures. Shown frames must be dropped (`lib.rs`).
 pub fn teardown() {

@@ -22,6 +22,7 @@ import android.graphics.Rect;
 import android.graphics.RenderNode;
 import android.graphics.drawable.Drawable;
 import android.hardware.HardwareBuffer;
+import android.hardware.SyncFence;
 import android.media.Image;
 import android.media.ImageReader;
 import android.os.Build;
@@ -39,7 +40,9 @@ import android.view.ViewParent;
 import android.widget.FrameLayout;
 import android.widget.RemoteViews;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -69,6 +72,8 @@ final class WidgetHost {
     private static final long FRAME_INTERVAL_MS = 33;
     /** At most ~60 GPU frames per second per widget. */
     private static final long GPU_FRAME_INTERVAL_MS = 16;
+    /** Longest wait for the GPU to finish drawing a frame ({@link GpuFrames}). */
+    private static final Duration GPU_FENCE_TIMEOUT = Duration.ofMillis(500);
     /** Longest side of the previews shown in the widget picker. */
     private static final int PREVIEW_SIDE_DP = 160;
 
@@ -698,6 +703,10 @@ final class WidgetHost {
             if (image == null) {
                 return;
             }
+            if (!awaitDrawn(image)) {
+                image.close();
+                return;
+            }
             HardwareBuffer buffer = image.getHardwareBuffer();
             if (buffer == null) {
                 image.close();
@@ -707,6 +716,27 @@ final class WidgetHost {
             held.put(seq, image);
             nativeOnWidgetBuffer(id, seq, width, height, buffer);
             buffer.close();
+        }
+
+        /**
+         * Waits until the GPU finished drawing {@code image}: it's handed over as
+         * soon as it's queued, while the GPU may still be drawing it (always with
+         * HWUI on Vulkan, the default on recent phones), and Rust would show a
+         * blank frame. Returns false if it isn't drawn in time (frame skipped).
+         */
+        private boolean awaitDrawn(Image image) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                return true;
+            }
+            try (SyncFence fence = image.getFence()) {
+                if (fence.isValid() && !fence.await(GPU_FENCE_TIMEOUT)) {
+                    Log.w(TAG, "the widget " + id + " took too long to draw");
+                    return false;
+                }
+            } catch (IOException | RuntimeException e) {
+                Log.w(TAG, "can't wait for the widget " + id + " to draw", e);
+            }
+            return true;
         }
 
         /** Rust is done with frame {@code seq} (if it's one of these). */

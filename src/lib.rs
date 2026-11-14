@@ -976,6 +976,7 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
                 log_error("redraw widgets", widgets::redraw());
             }
             slint::RenderingState::BeforeRendering => widget_gpu::before_rendering(),
+            slint::RenderingState::AfterRendering => widget_gpu::after_rendering(),
             slint::RenderingState::RenderingTeardown => {
                 widget_gpu::teardown();
                 // Their textures are gone: no frame until they're drawn again.
