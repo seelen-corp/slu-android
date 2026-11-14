@@ -70,7 +70,12 @@ export component AppsMenuPage inherits Rectangle {
                 search := TextField {
                     placeholder: I18n.t("apps_menu.search");
                     // Searches as you type, once typing pauses (`debounce`).
-                    text-changed => { debounce.restart(); }
+                    // `restart()` alone does nothing on a stopped timer: start it
+                    // first, then restart so the countdown resets per keystroke.
+                    text-changed => {
+                        debounce.start();
+                        debounce.restart();
+                    }
                     // Enter searches right away and opens the first result.
                     accepted => {
                         root.apply-search();
