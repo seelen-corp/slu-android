@@ -65,11 +65,18 @@ val cargoNdkBuild = tasks.register<Exec>("cargoNdkBuild") {
         "cargo", "ndk",
         "-t", "arm64-v8a",
         "-t", "x86_64",
-        "-P", "${android.compileSdk}",
+        // Native code links against minSdk, so NDK symbols newer than it fail
+        // the build instead of crashing on old devices.
+        "-P", "${android.defaultConfig.minSdk}",
         "-o", jniLibsDir.asFile.absolutePath,
         "build",
     )
     if (isRelease) args += "--release"
+
+    // Slint's build script compiles Java against the android.jar of the -P
+    // platform, which isn't installed: point it to the compileSdk one.
+    val sdkDir = androidComponents.sdkComponents.sdkDirectory.get().asFile
+    environment("ANDROID_JAR", sdkDir.resolve("platforms/android-${android.compileSdk}/android.jar").absolutePath)
 
     commandLine(args)
 }

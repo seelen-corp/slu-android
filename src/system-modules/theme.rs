@@ -21,6 +21,9 @@ pub struct AccentColors {
     pub darkest: Color,
 }
 
+/// API 27 (Android 8.1): `WallpaperManager.getWallpaperColors`.
+const API_O_MR1: i32 = 27;
+
 /// API 31 (Android 12): Material You system palette.
 const API_S: i32 = 31;
 
@@ -69,6 +72,9 @@ pub fn accent_colors() -> Result<AccentColors> {
 /// when unknown (e.g. some live wallpapers).
 pub fn wallpaper_supports_dark_text() -> Result<bool> {
     android_ctx::with_activity(|env, activity| {
+        if android_ctx::sdk_int(env)? < API_O_MR1 {
+            return Ok(false);
+        }
         let manager = env
             .call_static_method(
                 "android/app/WallpaperManager",
