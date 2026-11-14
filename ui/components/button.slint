@@ -1,4 +1,5 @@
 import { Tokens } from "../tokens.slint";
+import { Icon } from "icon.slint";
 
 // Button skins of the manifesto (`data-skin`).
 export enum ButtonSkin {
@@ -13,6 +14,10 @@ export enum ButtonSkin {
 // Standard button. The only button of the UI: never restyle it per page.
 export component Button inherits Rectangle {
     in property <string> text;
+    // Optional icon (`@image-url("../icons/<Name>.svg")`), before the text.
+    in property <image> icon;
+    // Shows only the icon; `text` stays as the accessible label.
+    in property <bool> icon-only: false;
     in property <ButtonSkin> skin: ButtonSkin.default;
     in property <bool> enabled: true;
     // Transparent skin drawn over the wallpaper (Home, Apps Menu): its text
@@ -20,6 +25,20 @@ export component Button inherits Rectangle {
     in property <bool> over-wallpaper: false;
 
     callback clicked();
+
+    // Text/icon color per skin and state.
+    private property <color> foreground: {
+        if root.skin == ButtonSkin.solid {
+            return Tokens.slu-std-ui-fg-color;
+        }
+        if root.skin == ButtonSkin.default && touch.pressed {
+            return Tokens.slu-std-ui-hover-color;
+        }
+        if root.over-wallpaper {
+            return Tokens.wallpaper-fg-color;
+        }
+        return Tokens.slu-std-fg-color;
+    }
 
     min-height: 40px;
     min-width: 40px;
@@ -46,31 +65,33 @@ export component Button inherits Rectangle {
     accessible-action-default => { root.clicked(); }
 
     HorizontalLayout {
-        padding-left: Tokens.spacing-m;
-        padding-right: Tokens.spacing-m;
+        padding-left: root.icon-only ? Tokens.spacing-xs : Tokens.spacing-m;
+        padding-right: root.icon-only ? Tokens.spacing-xs : Tokens.spacing-m;
         padding-top: Tokens.spacing-xs;
         padding-bottom: Tokens.spacing-xs;
+        spacing: Tokens.spacing-xs;
         alignment: center;
 
-        Text {
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+
+            Icon {
+                source: root.icon;
+                size: root.icon-only ? 1.5rem : 1rem;
+                tint: root.foreground;
+                // The wallpaper color and its shadow, like `WallpaperLabel`.
+                over-wallpaper: root.over-wallpaper && root.skin == ButtonSkin.transparent;
+            }
+        }
+
+        if !root.icon-only: Text {
             text: root.text;
             font-size: 1rem;
             font-weight: 500;
             vertical-alignment: center;
             horizontal-alignment: center;
             overflow: elide;
-            color: {
-                if root.skin == ButtonSkin.solid {
-                    return Tokens.slu-std-ui-fg-color;
-                }
-                if root.skin == ButtonSkin.default && touch.pressed {
-                    return Tokens.slu-std-ui-hover-color;
-                }
-                if root.over-wallpaper {
-                    return Tokens.wallpaper-fg-color;
-                }
-                return Tokens.slu-std-fg-color;
-            }
+            color: root.foreground;
         }
     }
 

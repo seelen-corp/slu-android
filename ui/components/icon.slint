@@ -1,0 +1,35 @@
+import { Tokens } from "../tokens.slint";
+
+// Standard icon: a monochrome SVG from `ui/icons/` (react-icons names, as on the
+// desktop), tinted with a foreground token (the `currentColor` of the desktop).
+// Next to text it matches the font size (manifesto: `1em`).
+export component Icon inherits Rectangle {
+    in property <image> source;
+    in property <length> size: 1rem;
+    in property <color> tint: Tokens.slu-std-fg-color;
+    // Drawn directly over the wallpaper (Home, Apps Menu): wallpaper color plus
+    // the shadow exception for legibility, like `WallpaperLabel`.
+    in property <bool> over-wallpaper: false;
+
+    width: root.size;
+    height: root.size;
+    accessible-role: none;
+
+    if root.over-wallpaper && Tokens.wallpaper-text-shadow: Image {
+        x: 1px;
+        y: 1px;
+        width: root.width;
+        height: root.height;
+        source: root.source;
+        image-fit: contain;
+        colorize: Tokens.wallpaper-text-shadow-color;
+    }
+
+    Image {
+        width: root.width;
+        height: root.height;
+        source: root.source;
+        image-fit: contain;
+        colorize: root.over-wallpaper ? Tokens.wallpaper-fg-color : root.tint;
+    }
+}

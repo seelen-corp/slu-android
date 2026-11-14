@@ -1,4 +1,5 @@
 import { Tokens } from "../tokens.slint";
+import { Icon } from "icon.slint";
 
 // Standard popup surface (`.slu-std-popover`): opaque base surface, `shadow-m`,
 // `radius-m`. Put it inside a `PopupWindow`; the items go in as children.
@@ -20,6 +21,8 @@ export component MenuSurface inherits Rectangle {
 // An entry of a `MenuSurface`: transparent, pressed overlay, selected overlay.
 export component MenuItem inherits Rectangle {
     in property <string> text;
+    // Optional leading icon (`@image-url("../icons/<Name>.svg")`).
+    in property <image> icon;
     in property <bool> selected: false;
 
     callback activated();
@@ -37,6 +40,15 @@ export component MenuItem inherits Rectangle {
     HorizontalLayout {
         padding-left: Tokens.spacing-s;
         padding-right: Tokens.spacing-s;
+        spacing: Tokens.spacing-s;
+
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+
+            Icon {
+                source: root.icon;
+            }
+        }
 
         Text {
             text: root.text;

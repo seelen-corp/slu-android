@@ -87,6 +87,8 @@ export component AppsMenuPage inherits Rectangle {
 
                 Button {
                     text: I18n.t("home.open_settings");
+                    icon: @image-url("../icons/IoSettingsOutline.svg");
+                    icon-only: true;
                     skin: ButtonSkin.transparent;
                     over-wallpaper: true;
                     clicked => { LauncherActions.open-settings(); }

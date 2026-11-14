@@ -199,6 +199,7 @@ export component AppItemBase inherits Rectangle {
             // The folders' actions; the pictures' two; the others are the app's.
             if root.is-folder && root.resizable-folder && !root.folder.large && HomeActions.can-resize-folder(root.folder.id, true): MenuItem {
                 text: I18n.t("home.enlarge_folder");
+                icon: @image-url("../icons/IoExpandOutline.svg");
                 activated => {
                     HomeActions.resize-folder(root.folder.id, true);
                     menu.close();
@@ -206,6 +207,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-folder && root.resizable-folder && root.folder.large: MenuItem {
                 text: I18n.t("home.shrink_folder");
+                icon: @image-url("../icons/IoContractOutline.svg");
                 activated => {
                     HomeActions.resize-folder(root.folder.id, false);
                     menu.close();
@@ -213,6 +215,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-folder: MenuItem {
                 text: I18n.t("home.disband_folder");
+                icon: @image-url("../icons/IoFolderOpenOutline.svg");
                 activated => {
                     HomeActions.disband-folder(root.folder.id);
                     menu.close();
@@ -220,6 +223,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-picture: MenuItem {
                 text: I18n.t("home.resize_picture");
+                icon: @image-url("../icons/IoResizeOutline.svg");
                 activated => {
                     root.resize-picture();
                     menu.close();
@@ -227,6 +231,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-picture: MenuItem {
                 text: root.picture.widget ? I18n.t("home.remove_widget") : I18n.t("home.delete_picture");
+                icon: @image-url("../icons/IoTrashOutline.svg");
                 activated => {
                     HomeActions.remove-picture(root.picture);
                     menu.close();
@@ -234,6 +239,7 @@ export component AppItemBase inherits Rectangle {
             }
             if !root.on-home && root.home-enabled && !root.app.pinned: MenuItem {
                 text: I18n.t("app_actions.add_to_home");
+                icon: @image-url("../icons/IoAddCircleOutline.svg");
                 activated => {
                     AppActions.add-to-home(root.app);
                     menu.close();
@@ -241,6 +247,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.in-folder: MenuItem {
                 text: I18n.t("app_actions.remove_from_folder");
+                icon: @image-url("../icons/IoExitOutline.svg");
                 activated => {
                     AppActions.remove-from-folder(root.app);
                     menu.close();
@@ -248,6 +255,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.on-home && root.is-app: MenuItem {
                 text: I18n.t("app_actions.remove_from_home");
+                icon: @image-url("../icons/IoRemoveCircleOutline.svg");
                 activated => {
                     AppActions.remove-from-home(root.app);
                     menu.close();
@@ -255,6 +263,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-app: MenuItem {
                 text: I18n.t("app_actions.app_info");
+                icon: @image-url("../icons/IoInformationCircleOutline.svg");
                 activated => {
                     AppActions.app-info(root.app);
                     menu.close();
@@ -262,6 +271,7 @@ export component AppItemBase inherits Rectangle {
             }
             if root.is-app && root.app.uninstallable: MenuItem {
                 text: I18n.t("app_actions.uninstall");
+                icon: @image-url("../icons/IoTrashOutline.svg");
                 activated => {
                     AppActions.uninstall(root.app);
                     menu.close();

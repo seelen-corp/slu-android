@@ -957,6 +957,7 @@ export component HomePage inherits Rectangle {
 
             MenuItem {
                 text: I18n.t("home.wallpaper");
+                icon: @image-url("../icons/IoColorPaletteOutline.svg");
                 activated => {
                     LauncherActions.open-wallpaper-picker();
                     home-menu.close();
@@ -965,6 +966,7 @@ export component HomePage inherits Rectangle {
             // Pictures are only shown on the grid.
             if root.grid: MenuItem {
                 text: I18n.t("home.add_picture");
+                icon: @image-url("../icons/IoImageOutline.svg");
                 activated => {
                     HomeActions.add-picture(root.menu-page, root.menu-col, root.menu-row);
                     home-menu.close();
@@ -973,6 +975,7 @@ export component HomePage inherits Rectangle {
             // Widgets too.
             if root.grid: MenuItem {
                 text: I18n.t("home.add_widget");
+                icon: @image-url("../icons/IoAppsOutline.svg");
                 activated => {
                     HomeActions.open-widget-picker(root.menu-page, root.menu-col, root.menu-row);
                     home-menu.close();
@@ -980,6 +983,7 @@ export component HomePage inherits Rectangle {
             }
             MenuItem {
                 text: I18n.t("home.open_settings");
+                icon: @image-url("../icons/IoSettingsOutline.svg");
                 activated => {
                     LauncherActions.open-settings();
                     home-menu.close();
