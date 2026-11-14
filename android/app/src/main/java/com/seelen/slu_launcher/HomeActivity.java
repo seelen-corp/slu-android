@@ -91,6 +91,18 @@ public class HomeActivity extends SluNativeActivity {
         runOnUiThread(() -> widgets.touch(id, action, x, y));
     }
 
+    public void widgetFrameDone(final int id, final int seq) {
+        runOnUiThread(() -> widgets.frameDone(id, seq));
+    }
+
+    public void redrawWidgets() {
+        runOnUiThread(() -> widgets.redraw());
+    }
+
+    public void useWidgetBitmaps() {
+        runOnUiThread(() -> widgets.useBitmaps());
+    }
+
     /**
      * The Home button (or gesture) while this activity is in the task: if it was
      * already the one in front, the UI goes back to its first screen.

@@ -9,7 +9,8 @@ use error::Result;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
 use system_modules::{
-    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme, widgets,
+    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme, widget_gpu,
+    widgets,
 };
 
 slint::include_modules!();
@@ -207,12 +208,21 @@ fn to_physical(window: &MainWindow, length: f32) -> f32 {
     length * window.window().scale_factor()
 }
 
-/// A new frame of a widget (`widgets::take_frame`): shown on Home in place.
+/// A new frame of a widget (`widgets::take_frame` or `widget_gpu::take`):
+/// shown on Home in place.
 fn apply_widget_frame(window: &MainWindow, id: u32) {
-    let Some(buffer) = widgets::take_frame(id) else {
-        return;
+    let frame = match widgets::take_frame(id) {
+        Some(buffer) => slint::Image::from_rgba8_premultiplied(buffer),
+        None => match widget_gpu::take(id) {
+            Some(frame) => frame,
+            None => return,
+        },
     };
-    let frame = slint::Image::from_rgba8_premultiplied(buffer);
+    set_widget_frame(window, id, frame);
+}
+
+/// Shows `frame` as the image of widget `id` on Home.
+fn set_widget_frame(window: &MainWindow, id: u32, frame: slint::Image) {
     WIDGET_FRAMES.with_borrow_mut(|frames| frames.insert(id, frame.clone()));
     let pictures = window.get_home_pictures();
     for i in 0..pictures.row_count() {
@@ -956,6 +966,35 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
         weak.upgrade_in_event_loop(move |window| apply_widget_frame(&window, id))
             .ok();
     });
+    // GPU frames of the widgets live in Slint's OpenGL context (`widget_gpu`).
+    let weak = window.as_weak();
+    let notifier = window
+        .window()
+        .set_rendering_notifier(move |state, _| match state {
+            slint::RenderingState::RenderingSetup => {
+                widget_gpu::setup();
+                log_error("redraw widgets", widgets::redraw());
+            }
+            slint::RenderingState::BeforeRendering => widget_gpu::before_rendering(),
+            slint::RenderingState::RenderingTeardown => {
+                widget_gpu::teardown();
+                // Their textures are gone: no frame until they're drawn again.
+                weak.upgrade_in_event_loop(|window| {
+                    let ids: Vec<u32> =
+                        WIDGET_FRAMES.with_borrow(|frames| frames.keys().copied().collect());
+                    for id in ids {
+                        set_widget_frame(&window, id, slint::Image::default());
+                    }
+                    WIDGET_FRAMES.with_borrow_mut(|frames| frames.clear());
+                })
+                .ok();
+            }
+            _ => {}
+        });
+    if let Err(err) = notifier {
+        log::error!("widget GPU frames unavailable: {err}");
+        log_error("use widget bitmaps", widgets::use_bitmaps());
+    }
     let weak = window.as_weak();
     widgets::subscribe_added(move |id, provider| {
         let weak = weak.clone();

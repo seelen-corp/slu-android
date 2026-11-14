@@ -1,8 +1,9 @@
 //! Android app widgets on Home (`config::HomeWidget`). The system side lives
 //! in `WidgetHost.java`: it binds and configures them, keeps their views in an
-//! invisible container and draws each one into a bitmap whenever it changes
-//! (`nativeOnWidgetFrame`). Home shows those frames like a picture and
-//! forwards the touches on them (`touch`).
+//! invisible container and draws each one whenever it changes: on the GPU into
+//! a `HardwareBuffer` (Android 10+, `nativeOnWidgetBuffer`, `widget_gpu`), or
+//! into a bitmap (`nativeOnWidgetFrame`). Home shows those frames like a
+//! picture and forwards the touches on them (`touch`).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -12,7 +13,7 @@ use jni::objects::{JByteArray, JByteBuffer, JClass, JObject, JObjectArray, JStri
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
 use crate::error::Result;
-use crate::system_modules::android_ctx;
+use crate::system_modules::{android_ctx, widget_gpu};
 
 /// A widget provider, as shown in the picker.
 pub struct WidgetProvider {
@@ -57,7 +58,7 @@ static FRAME_LISTENER: Mutex<Option<FrameListener>> = Mutex::new(None);
 static ADDED_LISTENER: Mutex<Option<AddedListener>> = Mutex::new(None);
 
 /// `on_frame(id)` runs (on the Android UI thread) when a widget has a new frame
-/// (`take_frame`). Replaces the previous listener.
+/// (`take_frame`, or `widget_gpu::take`). Replaces the previous listener.
 pub fn subscribe_frames(on_frame: impl Fn(u32) + Send + 'static) {
     if let Ok(mut listener) = FRAME_LISTENER.lock() {
         *listener = Some(Box::new(on_frame));
@@ -181,8 +182,9 @@ pub fn show(id: u32, width: i32, height: i32) -> Result<()> {
     })
 }
 
-/// Deletes a widget removed from Home.
+/// Deletes a widget removed from Home. Called on Slint's thread.
 pub fn remove(id: u32) -> Result<()> {
+    widget_gpu::remove(id);
     if let Ok(mut frames) = FRAMES.lock()
         && let Some(frames) = frames.as_mut()
     {
@@ -223,6 +225,84 @@ pub fn touch(id: u32, action: i32, x: f32, y: f32) -> Result<()> {
         )?;
         Ok(())
     })
+}
+
+/// Java may draw into the buffer of frame `seq` of a widget again
+/// (`nativeOnWidgetBuffer`). Any thread.
+pub fn frame_done(id: u32, seq: i32) -> Result<()> {
+    android_ctx::with_activity(|env, activity| {
+        env.call_method(
+            activity,
+            "widgetFrameDone",
+            "(II)V",
+            &[JValue::Int(id as i32), JValue::Int(seq)],
+        )?;
+        Ok(())
+    })
+}
+
+/// Draws every widget again, e.g. once their textures were lost
+/// (`widget_gpu::teardown`).
+pub fn redraw() -> Result<()> {
+    android_ctx::with_activity(|env, activity| {
+        env.call_method(activity, "redrawWidgets", "()V", &[])?;
+        Ok(())
+    })
+}
+
+/// The widgets go back to bitmap frames: GPU frames can't be shown here.
+pub fn use_bitmaps() -> Result<()> {
+    android_ctx::with_activity(|env, activity| {
+        env.call_method(activity, "useWidgetBitmaps", "()V", &[])?;
+        Ok(())
+    })
+}
+
+/// Called from `WidgetHost` (Android UI thread) with a new frame of a widget,
+/// drawn on the GPU: Rust holds the buffer (`widget_gpu`) until `frame_done`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_seelen_slu_1launcher_WidgetHost_nativeOnWidgetBuffer(
+    env: JNIEnv,
+    _class: JClass,
+    id: jni::sys::jint,
+    seq: jni::sys::jint,
+    width: jni::sys::jint,
+    height: jni::sys::jint,
+    buffer: JObject,
+) {
+    let id = id as u32;
+    if width <= 0 || height <= 0 {
+        give_back(id, seq);
+        return;
+    }
+    // Safety: a live HardwareBuffer of this call's env.
+    let buffer = unsafe {
+        widget_gpu::Buffer::acquire(
+            env.get_raw(),
+            buffer.as_raw(),
+            id,
+            seq,
+            width as u32,
+            height as u32,
+        )
+    };
+    let Some(buffer) = buffer else {
+        log::error!("failed to read a widget buffer");
+        give_back(id, seq);
+        return;
+    };
+    widget_gpu::push(buffer);
+    if let Ok(listener) = FRAME_LISTENER.lock()
+        && let Some(listener) = listener.as_ref()
+    {
+        listener(id);
+    }
+}
+
+fn give_back(id: u32, seq: i32) {
+    if let Err(err) = frame_done(id, seq) {
+        log::error!("failed to give back a widget frame: {err}");
+    }
 }
 
 /// Called from `WidgetHost` (Android UI thread) once a widget is bound and

@@ -15,7 +15,15 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.HardwareRenderer;
+import android.graphics.PixelFormat;
+import android.graphics.RecordingCanvas;
+import android.graphics.Rect;
+import android.graphics.RenderNode;
 import android.graphics.drawable.Drawable;
+import android.hardware.HardwareBuffer;
+import android.media.Image;
+import android.media.ImageReader;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -27,6 +35,7 @@ import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.FrameLayout;
 import android.widget.RemoteViews;
 
@@ -43,9 +52,10 @@ import java.util.Map;
  * <p>The window's content is the Slint surface (NativeActivity takes it), so the
  * widget views are never drawn on screen by Android: they live in an invisible
  * container (attached and laid out, so they update, tick and load their
- * collections like on any launcher), and each one is drawn into a bitmap
- * whenever it changes ({@link WidgetView#capture}). Rust shows those frames and
- * forwards the touches on them ({@link #touch}).
+ * collections like on any launcher), and each one is drawn whenever it changes
+ * ({@link WidgetView#capture}): on the GPU into a buffer that Rust shows as a
+ * texture (Android 10+, {@link GpuFrames}), or into a bitmap. Rust shows those
+ * frames and forwards the touches on them ({@link #touch}).
  *
  * <p>Everything here runs on the UI thread except {@link #providers}.
  */
@@ -55,8 +65,10 @@ final class WidgetHost {
     private static final int HOST_ID = 0x51;
     static final int REQUEST_BIND = 2;
     static final int REQUEST_CONFIGURE = 3;
-    /** At most ~30 frames per second per widget. */
+    /** At most ~30 bitmap frames per second per widget. */
     private static final long FRAME_INTERVAL_MS = 33;
+    /** At most ~60 GPU frames per second per widget. */
+    private static final long GPU_FRAME_INTERVAL_MS = 16;
     /** Longest side of the previews shown in the widget picker. */
     private static final int PREVIEW_SIDE_DP = 160;
 
@@ -72,6 +84,13 @@ final class WidgetHost {
      * {@code height} premultiplied RGBA pixels. Only valid during the call.
      */
     private static native void nativeOnWidgetFrame(int appWidgetId, int width, int height, ByteBuffer pixels);
+
+    /**
+     * Implemented in Rust (widgets.rs): frame {@code seq} of a widget, drawn on
+     * the GPU. Rust holds the buffer until {@link #frameDone}.
+     */
+    private static native void nativeOnWidgetBuffer(
+        int appWidgetId, int seq, int width, int height, HardwareBuffer buffer);
 
     /** A widget provider, for the picker. Its fields are read from Rust. */
     public static final class Provider {
@@ -102,6 +121,10 @@ final class WidgetHost {
     private int pendingId = -1;
     /** Between onStart and onStop: the widgets update and are drawn. */
     private boolean started;
+    /** Frames drawn on the GPU ({@link GpuFrames}), unless Rust can't show them. */
+    private boolean gpuFrames = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+    /** Number of the next GPU frame, unique across widgets. */
+    private int nextSeq;
 
     WidgetHost(Activity activity) {
         this.activity = activity;
@@ -113,7 +136,21 @@ final class WidgetHost {
                 return new WidgetView(context, appWidgetId);
             }
         };
-        container = new FrameLayout(activity);
+        container = new FrameLayout(activity) {
+            // A widget view invalidated itself (its own changes arrive in
+            // WidgetView#invalidateChildInParent).
+            @Override
+            @SuppressWarnings("deprecation")
+            public ViewParent invalidateChildInParent(int[] location, Rect dirty) {
+                for (int i = 0; i < views.size(); i++) {
+                    WidgetView view = views.valueAt(i);
+                    if (view.isDirty()) {
+                        view.scheduleCapture();
+                    }
+                }
+                return super.invalidateChildInParent(location, dirty);
+            }
+        };
         // "Shown" (some widgets, e.g. TextClock, only tick while they're visible)
         // but never drawn on the window: alpha, not visibility.
         container.setAlpha(0f);
@@ -139,6 +176,43 @@ final class WidgetHost {
             host.stopListening();
         } catch (RuntimeException e) {
             Log.e(TAG, "can't stop listening to the widget updates", e);
+        }
+        // Their GPU buffers aren't needed off screen (start draws them again).
+        for (int i = 0; i < views.size(); i++) {
+            views.valueAt(i).releaseGpu();
+        }
+    }
+
+    /** Rust is done with GPU frame {@code seq} of widget {@code id}. */
+    void frameDone(int id, int seq) {
+        WidgetView view = views.get(id);
+        if (view == null || view.gpu == null) {
+            return;
+        }
+        view.gpu.done(seq);
+        if (view.waitingForFrame) {
+            view.waitingForFrame = false;
+            view.scheduleCapture();
+        }
+    }
+
+    /** Draws every widget again (Rust lost its frames). */
+    void redraw() {
+        for (int i = 0; i < views.size(); i++) {
+            views.valueAt(i).scheduleCapture();
+        }
+    }
+
+    /** Rust can't show GPU frames: bitmaps from now on. */
+    void useBitmaps() {
+        if (!gpuFrames) {
+            return;
+        }
+        gpuFrames = false;
+        for (int i = 0; i < views.size(); i++) {
+            WidgetView view = views.valueAt(i);
+            view.releaseGpu();
+            view.scheduleCapture();
         }
     }
 
@@ -380,18 +454,26 @@ final class WidgetHost {
         event.recycle();
     }
 
-    /** A widget view that draws itself into a bitmap whenever it changes. */
+    /**
+     * A widget view that draws itself whenever it changes: on the GPU
+     * ({@link GpuFrames}), or into a bitmap.
+     */
     private final class WidgetView extends AppWidgetHostView {
         private final int id;
         private int width;
         private int height;
-        private Bitmap bitmap;
-        private Canvas canvas;
-        private ByteBuffer pixels;
         private boolean scheduled;
         private long lastCapture;
         long downTime;
+        /** Not drawn: Rust held every free GPU frame ({@link #frameDone}). */
+        boolean waitingForFrame;
         private final Runnable capture = this::capture;
+        // Bitmap frames.
+        private Bitmap bitmap;
+        private Canvas canvas;
+        private ByteBuffer pixels;
+        /** GPU frames (Android 10+), or null. */
+        GpuFrames gpu;
 
         WidgetView(Context context, int id) {
             super(context);
@@ -429,6 +511,16 @@ final class WidgetHost {
             scheduleCapture();
         }
 
+        // The window draws in software (its surface is Slint's), so a change
+        // inside the widget (an image loaded, a list filled, a clock ticking)
+        // arrives here. onDescendantInvalidated is the hardware path.
+        @Override
+        @SuppressWarnings("deprecation")
+        public ViewParent invalidateChildInParent(int[] location, Rect dirty) {
+            scheduleCapture();
+            return super.invalidateChildInParent(location, dirty);
+        }
+
         @Override
         public void onDescendantInvalidated(View child, View target) {
             super.onDescendantInvalidated(child, target);
@@ -441,7 +533,7 @@ final class WidgetHost {
             scheduleCapture();
         }
 
-        /** Draws it soon (coalesced, at most every {@link #FRAME_INTERVAL_MS}). */
+        /** Draws it soon (coalesced, at most one frame per interval). */
         void scheduleCapture() {
             // Also called by the constructor of AppWidgetHostView, before the
             // fields of this class are set.
@@ -449,7 +541,8 @@ final class WidgetHost {
                 return;
             }
             scheduled = true;
-            long delay = Math.max(0, lastCapture + FRAME_INTERVAL_MS - SystemClock.uptimeMillis());
+            long interval = gpuFrames ? GPU_FRAME_INTERVAL_MS : FRAME_INTERVAL_MS;
+            long delay = Math.max(0, lastCapture + interval - SystemClock.uptimeMillis());
             handler.postDelayed(capture, delay);
         }
 
@@ -464,8 +557,38 @@ final class WidgetHost {
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
                 layout(0, 0, width, height);
             }
+            if (gpuFrames) {
+                captureGpu();
+            } else {
+                captureBitmap();
+            }
+        }
+
+        private void captureGpu() {
+            if (gpu == null || gpu.width != width || gpu.height != height) {
+                releaseGpu();
+                try {
+                    gpu = new GpuFrames(id, width, height);
+                } catch (RuntimeException e) {
+                    Log.e(TAG, "can't draw the widget " + id + " on the GPU", e);
+                    return;
+                }
+            }
+            if (!gpu.canDraw()) {
+                waitingForFrame = true;
+                return;
+            }
+            waitingForFrame = false;
+            try {
+                gpu.draw(this);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "can't draw the widget " + id, e);
+            }
+        }
+
+        private void captureBitmap() {
             if (bitmap == null || bitmap.getWidth() != width || bitmap.getHeight() != height) {
-                release();
+                releaseBitmap();
                 bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
                 canvas = new Canvas(bitmap);
                 pixels = ByteBuffer.allocateDirect(width * height * 4);
@@ -484,15 +607,128 @@ final class WidgetHost {
             nativeOnWidgetFrame(id, width, height, pixels);
         }
 
-        void release() {
-            handler.removeCallbacks(capture);
-            scheduled = false;
+        void releaseGpu() {
+            waitingForFrame = false;
+            if (gpu != null) {
+                gpu.close();
+                gpu = null;
+            }
+        }
+
+        private void releaseBitmap() {
             if (bitmap != null) {
                 bitmap.recycle();
                 bitmap = null;
                 canvas = null;
                 pixels = null;
             }
+        }
+
+        void release() {
+            handler.removeCallbacks(capture);
+            scheduled = false;
+            releaseBitmap();
+            releaseGpu();
+        }
+    }
+
+    /**
+     * Frames of a widget drawn on the GPU (Android 10+): its views are recorded
+     * into a {@link RenderNode} and drawn by a {@link HardwareRenderer} into an
+     * {@link ImageReader}, whose buffers go to Rust without copies
+     * ({@link #nativeOnWidgetBuffer}). Rust holds each one until it's done with
+     * it ({@link #frameDone}); with all of them held, the next frame waits.
+     */
+    private final class GpuFrames implements ImageReader.OnImageAvailableListener {
+        /** One being drawn, one shown, one waiting to be shown. */
+        private static final int MAX_IMAGES = 3;
+
+        final int id;
+        final int width;
+        final int height;
+        private final ImageReader reader;
+        private final RenderNode node;
+        private final HardwareRenderer renderer;
+        /** Images given to Rust, by frame number. */
+        private final SparseArray<Image> held = new SparseArray<>();
+        private boolean closed;
+
+        GpuFrames(int id, int width, int height) {
+            this.id = id;
+            this.width = width;
+            this.height = height;
+            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_IMAGES,
+                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE | HardwareBuffer.USAGE_GPU_COLOR_OUTPUT);
+            reader.setOnImageAvailableListener(this, handler);
+            node = new RenderNode("widget-" + id);
+            node.setPosition(0, 0, width, height);
+            renderer = new HardwareRenderer();
+            renderer.setOpaque(false);
+            renderer.setContentRoot(node);
+            renderer.setSurface(reader.getSurface());
+        }
+
+        /** A buffer is free for one more frame. */
+        boolean canDraw() {
+            return held.size() < MAX_IMAGES - 1;
+        }
+
+        void draw(View view) {
+            RecordingCanvas canvas = node.beginRecording(width, height);
+            try {
+                view.draw(canvas);
+            } finally {
+                node.endRecording();
+            }
+            renderer.createRenderRequest().syncAndDraw();
+        }
+
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            if (closed) {
+                return;
+            }
+            Image image;
+            try {
+                image = reader.acquireLatestImage();
+            } catch (IllegalStateException e) {
+                Log.w(TAG, "no image free for the widget " + id, e);
+                return;
+            }
+            if (image == null) {
+                return;
+            }
+            HardwareBuffer buffer = image.getHardwareBuffer();
+            if (buffer == null) {
+                image.close();
+                return;
+            }
+            int seq = nextSeq++;
+            held.put(seq, image);
+            nativeOnWidgetBuffer(id, seq, width, height, buffer);
+            buffer.close();
+        }
+
+        /** Rust is done with frame {@code seq} (if it's one of these). */
+        void done(int seq) {
+            Image image = held.get(seq);
+            if (image != null) {
+                held.remove(seq);
+                image.close();
+            }
+        }
+
+        /** Rust keeps its own reference to the buffers it still holds. */
+        void close() {
+            closed = true;
+            reader.setOnImageAvailableListener(null, null);
+            renderer.destroy();
+            node.discardDisplayList();
+            for (int i = 0; i < held.size(); i++) {
+                held.valueAt(i).close();
+            }
+            held.clear();
+            reader.close();
         }
     }
 }
