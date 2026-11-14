@@ -1,4 +1,4 @@
-import { AppItem, HomeItem } from "types.slint";
+import { AppItem, HomeItem, PictureItem, WidgetProviderItem } from "types.slint";
 
 // Actions on an app, implemented in Rust. Called by every app entry (list row,
 // grid cell, Home cell) wherever it is shown.
@@ -45,12 +45,26 @@ export global HomeActions {
     // Opens the system image picker; the image goes to that grid cell if it's
     // free, otherwise to the first free one.
     callback add-picture(page: int, col: int, row: int);
-    // Removes a picture from Home (and its copy of the image).
-    callback remove-picture(id: int);
-    // Whether a picture can cover `columns` x `rows` cells from its own: they
-    // fit in the grid and nothing else is on them.
-    pure callback can-resize-picture(id: int, columns: int, rows: int) -> bool;
-    callback resize-picture(id: int, columns: int, rows: int);
+    // Removes a picture from Home (and its copy of the image), or a widget.
+    callback remove-picture(picture: PictureItem);
+    // Whether a picture or widget can cover `columns` x `rows` cells from its
+    // own: they fit in the grid and nothing else is on them.
+    pure callback can-resize-picture(picture: PictureItem, columns: int, rows: int) -> bool;
+    callback resize-picture(picture: PictureItem, columns: int, rows: int);
+    // Grid view: the size of a cell (the space between rows apart) and the
+    // padding around what's drawn in it, for the default size of new widgets.
+    callback grid-metrics(cell-width: length, cell-height: length, row-gap: length, inset: length);
+    // Opens the widget picker (Rust loads the providers); the widget goes to
+    // that grid cell if its cells are free, otherwise to the first free area.
+    callback open-widget-picker(page: int, col: int, row: int);
+    // A provider was picked: Rust binds the widget (the system may ask the user
+    // to allow it, and the widget may show its settings first), then adds it.
+    callback add-widget(provider: WidgetProviderItem);
+    // A widget is drawn `width` x `height` big (its frames follow that size).
+    callback widget-size(id: int, width: length, height: length);
+    // A touch on a widget, forwarded to it: `action` is a `MotionEvent` action
+    // (0 down, 1 up, 2 move, 3 cancel), at a position of the widget.
+    callback widget-touch(id: int, action: int, x: length, y: length);
 }
 
 // Launcher/system actions, implemented in Rust.
@@ -75,4 +89,7 @@ export global Interaction {
     // A picture of Home is being resized (its handles own the touch); cleared to
     // leave that mode (tap elsewhere, Back, Home).
     in-out property <bool> resizing-picture: false;
+    // A widget of Home is being touched: vertical swipes are its own (e.g. to
+    // scroll its list), not Home's.
+    in-out property <bool> widget-pressed: false;
 }

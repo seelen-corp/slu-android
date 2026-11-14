@@ -1,28 +1,32 @@
 import { Tokens } from "../tokens.slint";
+import { HomeActions } from "../app-actions.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { GridMetrics } from "app-grid.slint";
 
 // The image of a picture of Home: covers its whole area (cropped, never
-// stretched), with the corners of a card.
+// stretched), with the corners of a card. A widget's frame is drawn as it is:
+// it's already that size, with its own shape.
 export component PictureImage inherits Rectangle {
     in property <image> source;
+    in property <bool> widget: false;
 
-    border-radius: Tokens.radius-m;
-    clip: true;
+    border-radius: root.widget ? 0 : Tokens.radius-m;
+    clip: !root.widget;
 
     Image {
         width: parent.width;
         height: parent.height;
         source: root.source;
-        image-fit: cover;
+        image-fit: root.widget ? fill : cover;
     }
 
     @children
 }
 
-// A picture of Home (`PictureItem`), as big as the cells it covers. The image is
-// inset like the app icons (`GridMetrics.cell-padding`). Long press: drag it, or
-// its menu (resize, delete).
+// A picture or a widget of Home (`PictureItem`), as big as the cells it covers.
+// The image is inset like the app icons (`GridMetrics.cell-padding`). Long
+// press: drag it, or its menu (resize, delete). A widget gets the touches on
+// it until then, and gives its own pressed feedback.
 export component HomePicture inherits AppItemBase {
     // Hides the visuals but keeps the touch alive (it's being dragged).
     in property <bool> content-hidden: false;
@@ -31,17 +35,36 @@ export component HomePicture inherits AppItemBase {
     on-home: true;
     home-enabled: true;
     draggable: true;
+    forwards-touch: root.picture.widget;
     accessible-role: image;
+
+    property <length> content-width: Math.max(0, root.width - 2 * GridMetrics.cell-padding);
+    property <length> content-height: Math.max(0, root.height - 2 * GridMetrics.cell-padding);
+
+    // A widget is laid out (in Android) at the size it's drawn at.
+    function report-size() {
+        if root.picture.widget && root.content-width > 0 && root.content-height > 0 {
+            HomeActions.widget-size(root.picture.id, root.content-width, root.content-height);
+        }
+    }
+    init => { root.report-size(); }
+    changed content-width => { root.report-size(); }
+    changed content-height => { root.report-size(); }
+
+    touch-forwarded(action, x, y) => {
+        HomeActions.widget-touch(root.picture.id, action, x - GridMetrics.cell-padding, y - GridMetrics.cell-padding);
+    }
 
     PictureImage {
         x: GridMetrics.cell-padding;
         y: GridMetrics.cell-padding;
-        width: Math.max(0, root.width - 2 * GridMetrics.cell-padding);
-        height: Math.max(0, root.height - 2 * GridMetrics.cell-padding);
+        width: root.content-width;
+        height: root.content-height;
         source: root.picture.source;
+        widget: root.picture.widget;
         visible: !root.content-hidden;
 
-        if root.pressed: Rectangle {
+        if root.pressed && !root.picture.widget: Rectangle {
             background: Tokens.slu-std-ui-pressed-overlay;
         }
     }

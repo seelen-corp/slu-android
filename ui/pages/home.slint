@@ -99,7 +99,7 @@ component HomeLayoutBase inherits Rectangle {
     protected pure function same-entry(a: HomeItem, b: HomeItem) -> bool {
         return a.is-folder == b.is-folder && a.is-picture == b.is-picture && (a.is-folder
             ? a.folder.id == b.folder.id
-            : a.is-picture ? a.picture.id == b.picture.id
+            : a.is-picture ? a.picture.id == b.picture.id && a.picture.widget == b.picture.widget
             : a.app.package-name == b.app.package-name && a.app.activity-name == b.app.activity-name);
     }
 
@@ -273,16 +273,16 @@ component HomeGrid inherits HomeLayoutBase {
             : clamp(round((x - root.pages-x - root.resize-item.col * root.cell-width) / Math.max(1px, root.cell-width)), 1, Math.max(1, root.columns - root.resize-item.col));
         let rows = !vertical ? root.resize-rows
             : clamp(round((y - root.pages-y - root.resize-item.row * (root.cell-height + root.row-gap) + root.row-gap) / Math.max(1px, root.cell-height + root.row-gap)), 1, Math.max(1, root.row-count - root.resize-item.row));
-        let id = root.resize-item.picture.id;
+        let picture = root.resize-item.picture;
         if cols == root.resize-cols && rows == root.resize-rows {
             return;
         }
-        if HomeActions.can-resize-picture(id, cols, rows) {
+        if HomeActions.can-resize-picture(picture, cols, rows) {
             root.resize-cols = cols;
             root.resize-rows = rows;
-        } else if cols != root.resize-cols && HomeActions.can-resize-picture(id, cols, root.resize-rows) {
+        } else if cols != root.resize-cols && HomeActions.can-resize-picture(picture, cols, root.resize-rows) {
             root.resize-cols = cols;
-        } else if rows != root.resize-rows && HomeActions.can-resize-picture(id, root.resize-cols, rows) {
+        } else if rows != root.resize-rows && HomeActions.can-resize-picture(picture, root.resize-cols, rows) {
             root.resize-rows = rows;
         }
     }
@@ -290,18 +290,21 @@ component HomeGrid inherits HomeLayoutBase {
     // A handle was released: saves the size.
     function commit-resize() {
         if root.resize-cols != root.resize-item.picture.columns || root.resize-rows != root.resize-item.picture.rows {
-            HomeActions.resize-picture(root.resize-item.picture.id, root.resize-cols, root.resize-rows);
+            HomeActions.resize-picture(root.resize-item.picture, root.resize-cols, root.resize-rows);
             root.resize-item.picture.columns = root.resize-cols;
             root.resize-item.picture.rows = root.resize-rows;
         }
     }
 
     // Columns/rows a picture is drawn with: its own, or the resize in progress.
+    pure function is-resized(item: HomeItem) -> bool {
+        return root.resizing && root.same-entry(item, root.resize-item);
+    }
     pure function picture-cols(item: HomeItem) -> int {
-        return root.resizing && item.picture.id == root.resize-item.picture.id ? root.resize-cols : item.picture.columns;
+        return root.is-resized(item) ? root.resize-cols : item.picture.columns;
     }
     pure function picture-rows(item: HomeItem) -> int {
-        return root.resizing && item.picture.id == root.resize-item.picture.id ? root.resize-rows : item.picture.rows;
+        return root.is-resized(item) ? root.resize-rows : item.picture.rows;
     }
 
     function report-rows() {
@@ -311,8 +314,20 @@ component HomeGrid inherits HomeLayoutBase {
         }
     }
 
+    function report-metrics() {
+        if root.cell-width > 0 && root.cell-height > 0 {
+            HomeActions.grid-metrics(root.cell-width, root.cell-height, root.row-gap, GridMetrics.cell-padding);
+        }
+    }
+
     changed row-count => { root.report-rows(); }
-    init => { root.report-rows(); }
+    changed cell-width => { root.report-metrics(); }
+    changed cell-height => { root.report-metrics(); }
+    changed row-gap => { root.report-metrics(); }
+    init => {
+        root.report-rows();
+        root.report-metrics();
+    }
 
     // Dragging an app to a side edge flips the page.
     property <length> edge-zone: 24px;
@@ -528,6 +543,7 @@ component HomeGrid inherits HomeLayoutBase {
         width: Math.max(0, root.area-width(root.span-cols) - 2 * GridMetrics.cell-padding);
         height: Math.max(0, root.area-height(root.span-rows) - 2 * GridMetrics.cell-padding);
         source: root.drag-item.picture.source;
+        widget: root.drag-item.picture.widget;
     }
 
     // The large folder being dragged, under the finger (by the point it was
@@ -552,9 +568,10 @@ component HomeGrid inherits HomeLayoutBase {
         width: root.area-width(root.resize-cols);
         height: root.area-height(root.resize-rows);
 
-        // Selection outline, concentric with the image (inset by the cell padding).
+        // Selection outline, concentric with the image (inset by the cell
+        // padding); widgets have their own shape, drawn square.
         Rectangle {
-            border-radius: Tokens.radius-m + GridMetrics.cell-padding;
+            border-radius: (root.resize-item.picture.widget ? 0 : Tokens.radius-m) + GridMetrics.cell-padding;
             border-width: 2px;
             border-color: Tokens.system-accent-color;
         }
@@ -741,6 +758,7 @@ export component HomePage inherits Rectangle {
         root.dragging = false;
         Interaction.item-lifted = false;
         Interaction.resizing-picture = false;
+        Interaction.widget-pressed = false;
         root.clamp-page();
     }
 
@@ -815,8 +833,9 @@ export component HomePage inherits Rectangle {
         enabled: root.grid && !Interaction.item-lifted && !root.dragging && !Interaction.resizing-picture;
         handle-swipe-left: true;
         handle-swipe-right: true;
-        handle-swipe-up: true;
-        handle-swipe-down: true;
+        // Over a widget, vertical swipes are the widget's (e.g. its list).
+        handle-swipe-up: !Interaction.widget-pressed;
+        handle-swipe-down: !Interaction.widget-pressed;
 
         property <length> dx: self.current-position.x - self.pressed-position.x;
         property <length> dy: self.current-position.y - self.pressed-position.y;
@@ -948,6 +967,14 @@ export component HomePage inherits Rectangle {
                 text: I18n.t("home.add_picture");
                 activated => {
                     HomeActions.add-picture(root.menu-page, root.menu-col, root.menu-row);
+                    home-menu.close();
+                }
+            }
+            // Widgets too.
+            if root.grid: MenuItem {
+                text: I18n.t("home.add_widget");
+                activated => {
+                    HomeActions.open-widget-picker(root.menu-page, root.menu-col, root.menu-row);
                     home-menu.close();
                 }
             }

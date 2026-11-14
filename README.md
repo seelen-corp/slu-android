@@ -1,9 +1,9 @@
 # Seelen UI Launcher for Android
 
 Android launcher written 100% in Rust (`android-activity` + `ndk` +
-`ndk-context`, no Kotlin/Java). The crate lives at the repo root; `android/`
-is a standard Gradle project that cross-compiles it with `cargo-ndk` and
-packages it into an APK.
+`ndk-context`, no Kotlin/Java). The crate lives at the repo root; `android/` is
+a standard Gradle project that cross-compiles it with `cargo-ndk` and packages
+it into an APK.
 
 ```
 slu-android/
@@ -37,17 +37,17 @@ cd android
 .\gradlew.bat assembleRelease    # optimized, signed with release.keystore
 ```
 
-This runs `cargo ndk` against the crate at the repo root, drops the
-resulting `.so` files into `android/app/src/main/jniLibs/`, then has Gradle
-package and sign the APK. Output:
+This runs `cargo ndk` against the crate at the repo root, drops the resulting
+`.so` files into `android/app/src/main/jniLibs/`, then has Gradle package and
+sign the APK. Output:
 
 - `android/app/build/outputs/apk/debug/app-debug.apk`
 - `android/app/build/outputs/apk/release/app-release.apk`
 
 ## Run
 
-If you have a physical device with USB debugging enabled, plug it in and
-skip straight to `installDebug` below. Otherwise, use an emulator (AVD):
+If you have a physical device with USB debugging enabled, plug it in and skip
+straight to `installDebug` below. Otherwise, use an emulator (AVD):
 
 ### 1. Create the AVD (optional, one-time)
 
@@ -84,8 +84,8 @@ adb logcat -s slu_launcher
 ### Troubleshooting
 
 If `installDebug` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the device
-already has a build installed with a different signing key (e.g. you
-previously installed a release build). Uninstall it first, then reinstall:
+already has a build installed with a different signing key (e.g. you previously
+installed a release build). Uninstall it first, then reinstall:
 
 ```powershell
 & "$env:ANDROID_HOME\platform-tools\adb.exe" uninstall com.seelen.slu_launcher
@@ -99,8 +99,8 @@ The version lives only in `Cargo.toml` (`[package].version`); Gradle derives
 
 To publish: bump the version in `Cargo.toml`, commit, then push a matching tag
 (`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml`
-runs CI, checks the tag against `Cargo.toml`, builds the signed APK and
-attaches it to a GitHub release.
+runs CI, checks the tag against `Cargo.toml`, builds the signed APK and attaches
+it to a GitHub release.
 
 Required repository secrets: `ANDROID_KEYSTORE_BASE64` (the `.keystore` file,
 base64-encoded), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,

@@ -28,13 +28,34 @@ export struct FolderItem {
     notifications: int,
 }
 
-// An image picked by the user (`config::HomeImage`), on the Home grid only. It
-// covers `columns` x `rows` cells from its own cell (the top-left one).
+// An image picked by the user (`config::HomeImage`) or an Android app widget
+// (`widget`, `config::HomeWidget`), on the Home grid only. It covers `columns` x
+// `rows` cells from its own cell (the top-left one). Ids are unique among the
+// images, and among the widgets.
 export struct PictureItem {
     id: int,
+    // A widget: `source` is its latest frame, and the touches on it go to it
+    // (`HomeActions.widget-touch`).
+    widget: bool,
     source: image,
     columns: int,
     rows: int,
+}
+
+// A widget provider, in the widget picker. Sorted by app, then label.
+export struct WidgetProviderItem {
+    // Flattened component name (`package/class`).
+    component: string,
+    label: string,
+    app-label: string,
+    // The first provider of its app: the app label goes above it.
+    first-of-app: bool,
+    preview: image,
+    // Cells it takes when added.
+    columns: int,
+    rows: int,
+    // `columns` x `rows`, translated.
+    size: string,
 }
 
 // An app, folder or picture placed on Home: a cell of a grid page, or a slot of

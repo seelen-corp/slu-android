@@ -40,12 +40,55 @@ public class HomeActivity extends SluNativeActivity {
      */
     private static native void nativeOnImagePicked(String fileName);
 
+    /** The app widgets on Home (system-modules/widgets.rs). */
+    private WidgetHost widgets;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // NativeActivity makes the surface opaque (RGB_565): the wallpaper behind
         // the window needs one with alpha.
         getWindow().setFormat(PixelFormat.TRANSLUCENT);
+        widgets = new WidgetHost(this);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        widgets.start();
+    }
+
+    @Override
+    protected void onStop() {
+        widgets.stop();
+        super.onStop();
+    }
+
+    // App widgets, called from Rust (system-modules/widgets.rs). Any thread.
+
+    /** Every installed widget provider ({@link WidgetHost.Provider}). */
+    public Object[] widgetProviders() {
+        return widgets.providers();
+    }
+
+    public void addWidget(final String component) {
+        runOnUiThread(() -> widgets.add(component));
+    }
+
+    public void showWidget(final int id, final int width, final int height) {
+        runOnUiThread(() -> widgets.show(id, width, height));
+    }
+
+    public void removeWidget(final int id) {
+        runOnUiThread(() -> widgets.remove(id));
+    }
+
+    public void pruneWidgets(final int[] keep) {
+        runOnUiThread(() -> widgets.prune(keep));
+    }
+
+    public void widgetTouch(final int id, final int action, final float x, final float y) {
+        runOnUiThread(() -> widgets.touch(id, action, x, y));
     }
 
     /**
@@ -93,6 +136,9 @@ public class HomeActivity extends SluNativeActivity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (widgets.onActivityResult(requestCode, resultCode)) {
+            return;
+        }
         if (requestCode != REQUEST_PICK_IMAGE || resultCode != RESULT_OK
                 || data == null || data.getData() == null) {
             return;

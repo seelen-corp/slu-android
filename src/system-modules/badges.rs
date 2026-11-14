@@ -69,7 +69,9 @@ pub fn access_granted() -> Result<bool> {
         let value: String = env.get_string(&JString::from(value))?.into();
         // Flattened component names (`package/class`), separated by `:`.
         let prefix = format!("{package}/");
-        Ok(value.split(':').any(|component| component.starts_with(&prefix)))
+        Ok(value
+            .split(':')
+            .any(|component| component.starts_with(&prefix)))
     })
 }
 

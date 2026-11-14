@@ -9,8 +9,15 @@ home:
   add_picture: Add image
   resize_picture: Resize
   delete_picture: Delete
+  add_widget: Add widget
+  remove_widget: Remove
   empty: Swipe up to see all your apps. Long-press one and choose "Add to Home".
   empty_list: Tap "All apps" to see all your apps. Long-press one and choose "Add to Home".
+widgets:
+  picker_title: Widgets
+  loading: Loading widgets…
+  empty: No widgets installed
+  size: "%{columns} × %{rows}"
 apps_menu:
   search: Search apps
   no_results: No apps found

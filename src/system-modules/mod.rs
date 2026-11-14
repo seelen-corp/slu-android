@@ -8,3 +8,4 @@ pub mod images;
 pub mod locale;
 pub mod system;
 pub mod theme;
+pub mod widgets;

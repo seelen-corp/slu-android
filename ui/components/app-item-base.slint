@@ -32,6 +32,9 @@ export component AppItemBase inherits Rectangle {
     in property <bool> folder-apps-clickable: false;
     // Shows its notification badge (Home and its folders).
     in property <bool> show-badge: false;
+    // A widget of Home: the touches on it are forwarded (`touch-forwarded`)
+    // until the long press lifts it, then cancelled.
+    in property <bool> forwards-touch: false;
 
     // An app (not a folder or a picture).
     property <bool> is-app: !root.is-folder && !root.is-picture;
@@ -57,6 +60,9 @@ export component AppItemBase inherits Rectangle {
     pure callback folder-app-at(x: length, y: length) -> int;
     // "Resize" of a picture's menu.
     callback resize-picture();
+    // With `forwards-touch`: a `MotionEvent` action (0 down, 1 up, 2 move,
+    // 3 cancel) at a position of the entry.
+    callback touch-forwarded(action: int, x: length, y: length);
     // Drag of a `draggable` entry. Positions are in window coordinates.
     // Started by the long press.
     callback drag-started(x: length, y: length);
@@ -107,7 +113,18 @@ export component AppItemBase inherits Rectangle {
                 root.moved-away = false;
                 root.dragging = false;
                 root.dragged = false;
+                if root.forwards-touch {
+                    Interaction.widget-pressed = true;
+                    root.touch-forwarded(0, self.mouse-x, self.mouse-y);
+                }
             } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                // After a long press the widget already got a cancel.
+                if root.forwards-touch && !root.long-pressed {
+                    root.touch-forwarded(event.kind == PointerEventKind.up ? 1 : 3, self.mouse-x, self.mouse-y);
+                }
+                if root.forwards-touch {
+                    Interaction.widget-pressed = false;
+                }
                 if root.dragging && root.dragged {
                     root.drag-ended(root.pointer-x, root.pointer-y);
                 } else if root.dragging {
@@ -125,6 +142,9 @@ export component AppItemBase inherits Rectangle {
 
         moved => {
             let far = abs(self.mouse-x - self.pressed-x) > root.slop || abs(self.mouse-y - self.pressed-y) > root.slop;
+            if root.forwards-touch && !root.long-pressed {
+                root.touch-forwarded(2, self.mouse-x, self.mouse-y);
+            }
             if !root.long-pressed {
                 if far {
                     root.moved-away = true;
@@ -154,8 +174,12 @@ export component AppItemBase inherits Rectangle {
         running: touch.pressed && !root.long-pressed && !root.moved-away;
         triggered => {
             root.long-pressed = true;
-            // From now on this entry owns the touch (no page/list swipes).
+            // From now on this entry owns the touch (no page/list swipes), and
+            // a widget doesn't get it anymore.
             Interaction.item-lifted = true;
+            if root.forwards-touch {
+                root.touch-forwarded(3, touch.mouse-x, touch.mouse-y);
+            }
             LauncherActions.haptic();
             // The menu is ready and, together with it, the drag.
             if root.draggable {
@@ -202,9 +226,9 @@ export component AppItemBase inherits Rectangle {
                 }
             }
             if root.is-picture: MenuItem {
-                text: I18n.t("home.delete_picture");
+                text: root.picture.widget ? I18n.t("home.remove_widget") : I18n.t("home.delete_picture");
                 activated => {
-                    HomeActions.remove-picture(root.picture.id);
+                    HomeActions.remove-picture(root.picture);
                     menu.close();
                 }
             }

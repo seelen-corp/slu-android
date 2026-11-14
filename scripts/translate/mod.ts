@@ -1,9 +1,14 @@
-import { GoogleTranslator, ObjectTranslator } from "@seelen/translation-toolkit";
+import {
+  GoogleTranslator,
+  ObjectTranslator,
+} from "@seelen/translation-toolkit";
 import { SupportedLanguages } from "@seelen-ui/lib";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import yaml from "js-yaml";
 
-const targetLanguages = SupportedLanguages.filter((lang) => lang.value !== "en");
+const targetLanguages = SupportedLanguages.filter((lang) =>
+  lang.value !== "en"
+);
 
 async function completeTranslationsFor(localesDir: string) {
   const translator = new GoogleTranslator({ source: "en" });
@@ -33,7 +38,10 @@ async function completeTranslationsFor(localesDir: string) {
       translation = yaml.load(readFileSync(filePath, "utf8"));
     }
 
-    const translated = await fileTranslator.translate_to(targetLang.value, translation);
+    const translated = await fileTranslator.translate_to(
+      targetLang.value,
+      translation,
+    );
     writeFileSync(filePath, yaml.dump(translated));
   }
 

@@ -2,15 +2,16 @@ import { HomePage } from "pages/home.slint";
 import { AppsMenuPage } from "pages/apps-menu.slint";
 import { ConfigPage } from "pages/config.slint";
 import { FolderPage } from "pages/folder.slint";
+import { WidgetPickerPage } from "pages/widget-picker.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "types.slint";
+import { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "types.slint";
 import { HomeActions, Interaction, LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
 export { AppsLayout } from "apps-layout.slint";
-export { AppItem, FolderItem, HomeItem, PictureItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition }
+export { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
@@ -36,6 +37,11 @@ export component MainWindow inherits Window {
     // folder up to date, and closes the view if the folder is gone.
     in-out property <bool> folder-open: false;
     in-out property <FolderItem> open-folder;
+    // The widget picker: shown over Home while `widget-picker-open` (opened by
+    // Rust, `HomeActions.open-widget-picker`), with the installed providers.
+    in-out property <bool> widget-picker-open: false;
+    in property <[WidgetProviderItem]> widget-providers: [];
+    in property <bool> widget-providers-loading: false;
 
     // The system wallpaper is drawn behind the window (wallpaper theme).
     background: transparent;
@@ -44,8 +50,9 @@ export component MainWindow inherits Window {
     // Only meaningful with Home enabled; without it the Apps Menu is the only screen.
     private property <bool> apps-menu-open: false;
     private property <bool> focus-search-on-open: false;
-    // The Apps Menu or a folder is shown: the wallpaper is behind the scrim.
-    private property <bool> dimmed: !root.home-enabled || root.apps-menu-open || root.folder-open;
+    // The Apps Menu, a folder or the widget picker is shown: the wallpaper is
+    // behind the scrim.
+    private property <bool> dimmed: !root.home-enabled || root.apps-menu-open || root.folder-open || root.widget-picker-open;
 
     changed dimmed => {
         Tokens.wallpaper-dimmed = self.dimmed;
@@ -59,6 +66,7 @@ export component MainWindow inherits Window {
             LauncherActions.search("");
         }
         root.apps-menu-open = false;
+        root.widget-picker-open = false;
         root.close-folder();
         home.cancel-drag();
         key-handler.focus();
@@ -69,7 +77,7 @@ export component MainWindow inherits Window {
     public function home-pressed() {
         if Interaction.resizing-picture {
             Interaction.resizing-picture = false;
-        } else if root.apps-menu-open || root.folder-open {
+        } else if root.apps-menu-open || root.folder-open || root.widget-picker-open {
             root.show-home();
         } else {
             home.go-to-first-page();
@@ -110,7 +118,7 @@ export component MainWindow inherits Window {
             if event.text == Key.Back {
                 if Interaction.resizing-picture {
                     Interaction.resizing-picture = false;
-                } else if root.home-enabled && (root.apps-menu-open || root.folder-open) {
+                } else if root.home-enabled && (root.apps-menu-open || root.folder-open || root.widget-picker-open) {
                     root.show-home();
                 }
                 // Consumed even on Home: the launcher is never closed by Back.
@@ -119,14 +127,14 @@ export component MainWindow inherits Window {
             reject
         }
 
-        // Scrim over the wallpaper, behind the Apps Menu / folder.
+        // Scrim over the wallpaper, behind the Apps Menu / folder / widget picker.
         if root.dimmed: Rectangle {
             background: Tokens.scrim-color;
         }
 
         // Kept alive while the Apps Menu or a folder is open (keeps its page), but hidden.
         home := HomePage {
-            visible: root.home-enabled && !root.apps-menu-open && !root.folder-open;
+            visible: root.home-enabled && !root.apps-menu-open && !root.folder-open && !root.widget-picker-open;
             items: root.home-items;
             pictures: root.home-pictures;
             dock-items: root.dock-items;
@@ -171,6 +179,14 @@ export component MainWindow inherits Window {
                     self.focus-search();
                 }
             }
+        }
+
+        if root.home-enabled && root.widget-picker-open: WidgetPickerPage {
+            providers: root.widget-providers;
+            loading: root.widget-providers-loading;
+            top-inset: root.safe-area-insets.top;
+            bottom-inset: root.safe-area-insets.bottom;
+            close => { root.show-home(); }
         }
     }
 }

@@ -9,7 +9,7 @@ use error::Result;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
 use system_modules::{
-    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme,
+    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme, widgets,
 };
 
 slint::include_modules!();
@@ -185,11 +185,111 @@ impl HomeItem {
         if self.is_folder {
             EntryKey::Folder(to_index(self.folder.id))
         } else if self.is_picture {
-            EntryKey::Image(to_index(self.picture.id))
+            self.picture.key()
         } else {
             EntryKey::App(self.app.app_ref())
         }
     }
+}
+
+impl PictureItem {
+    fn key(&self) -> EntryKey {
+        if self.widget {
+            EntryKey::Widget(to_index(self.id))
+        } else {
+            EntryKey::Image(to_index(self.id))
+        }
+    }
+}
+
+/// Logical px (`length` callback arguments) to physical px of the main window.
+fn to_physical(window: &MainWindow, length: f32) -> f32 {
+    length * window.window().scale_factor()
+}
+
+/// A new frame of a widget (`widgets::take_frame`): shown on Home in place.
+fn apply_widget_frame(window: &MainWindow, id: u32) {
+    let Some(buffer) = widgets::take_frame(id) else {
+        return;
+    };
+    let frame = slint::Image::from_rgba8_premultiplied(buffer);
+    WIDGET_FRAMES.with_borrow_mut(|frames| frames.insert(id, frame.clone()));
+    let pictures = window.get_home_pictures();
+    for i in 0..pictures.row_count() {
+        if let Some(mut item) = pictures.row_data(i)
+            && item.picture.widget
+            && item.picture.id == id as i32
+        {
+            item.picture.source = frame;
+            pictures.set_row_data(i, item);
+            return;
+        }
+    }
+}
+
+/// Loads the widget providers (on another thread: rendering their previews is
+/// slow) into the widget picker.
+fn load_widget_providers(window: &MainWindow) {
+    window.set_widget_providers(ModelRc::default());
+    window.set_widget_providers_loading(true);
+    let weak = window.as_weak();
+    std::thread::spawn(move || {
+        let providers = widgets::providers().unwrap_or_else(|err| {
+            log::error!("failed to load the widget providers: {err}");
+            Vec::new()
+        });
+        weak.upgrade_in_event_loop(move |window| show_widget_providers(&window, providers))
+            .ok();
+    });
+}
+
+fn show_widget_providers(window: &MainWindow, mut providers: Vec<widgets::WidgetProvider>) {
+    let locale = window.global::<I18n>().get_locale();
+    let (cell, gap, inset) = GRID_METRICS.get();
+    let (columns, rows) =
+        SHOWN_CONFIG.with_borrow(|config| (config.home_columns, config.home_rows));
+    providers.sort_by_cached_key(|provider| {
+        (
+            fold(&provider.app_label),
+            provider.app_label.clone(),
+            fold(&provider.label),
+        )
+    });
+    let mut previous_app: Option<String> = None;
+    let items: Vec<WidgetProviderItem> = providers
+        .into_iter()
+        .map(|provider| {
+            let (span_columns, span_rows) = provider.default_span(cell, gap, inset);
+            let (span_columns, span_rows) = (
+                span_columns.clamp(1, columns.max(1)),
+                span_rows.clamp(1, rows.max(1)),
+            );
+            let first_of_app = previous_app.as_deref() != Some(provider.app_label.as_str());
+            previous_app = Some(provider.app_label.clone());
+            WidgetProviderItem {
+                size: rust_i18n::t!(
+                    "widgets.size",
+                    locale = locale.as_str(),
+                    columns = span_columns,
+                    rows = span_rows
+                )
+                .as_ref()
+                .into(),
+                component: provider.component.into(),
+                label: provider.label.into(),
+                app_label: provider.app_label.into(),
+                first_of_app,
+                preview: provider.preview.map_or_else(
+                    slint::Image::default,
+                    slint::Image::from_rgba8_premultiplied,
+                ),
+                columns: span_columns as i32,
+                rows: span_rows as i32,
+            }
+        })
+        .collect();
+    window.set_widget_providers(ModelRc::new(VecModel::from(items)));
+    window.set_widget_providers_loading(false);
 }
 
 /// A grid cell (`dock` false) or dock slot, as the UI gives them.
@@ -241,6 +341,16 @@ thread_local! {
     static SHOWN_CONFIG: RefCell<config::Config> = RefCell::new(config::Config::default());
     /// Grid cell where the image being picked goes (`HomeActions.add-picture`).
     static PICTURE_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
+    /// Grid cell where the widget picker was opened (`HomeActions.open-widget-picker`).
+    static WIDGET_PICKER_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
+    /// The widget being added (`HomeActions.add-widget`, until the system
+    /// reports it bound): where it goes, and its cells.
+    static PENDING_WIDGET: Cell<Option<(Option<Slot>, (u32, u32))>> = const { Cell::new(None) };
+    /// Latest frame of each widget on Home (`widgets::take_frame`).
+    static WIDGET_FRAMES: RefCell<HashMap<u32, slint::Image>> = Default::default();
+    /// Grid cell size (width, height), space between rows and inset of what's
+    /// drawn in a cell, logical px (`HomeActions.grid-metrics`).
+    static GRID_METRICS: Cell<((f32, f32), f32, f32)> = const { Cell::new(((80.0, 100.0), 0.0, 4.0)) };
 }
 
 fn picture_image(file: &str) -> slint::Image {
@@ -472,9 +582,23 @@ fn refresh(window: &MainWindow) -> Result<()> {
                 item.is_picture = true;
                 item.picture = PictureItem {
                     id: image.id as i32,
+                    widget: false,
                     source: picture_image(&image.file),
                     columns: image.columns as i32,
                     rows: image.rows as i32,
+                };
+            }
+            // Shown like a picture, with its latest frame.
+            HomeContent::Widget(widget) => {
+                item.is_picture = true;
+                item.picture = PictureItem {
+                    id: widget.id as i32,
+                    widget: true,
+                    source: WIDGET_FRAMES
+                        .with_borrow(|frames| frames.get(&widget.id).cloned())
+                        .unwrap_or_default(),
+                    columns: widget.columns as i32,
+                    rows: widget.rows as i32,
                 };
             }
         }
@@ -541,6 +665,9 @@ fn refresh(window: &MainWindow) -> Result<()> {
             )
         })
     });
+    // Frames of widgets no longer on Home.
+    let widget_ids = config.widget_ids();
+    WIDGET_FRAMES.with_borrow_mut(|frames| frames.retain(|id, _| widget_ids.contains(id)));
     let home_list: Vec<HomeItem> = config
         .list_order()
         .into_iter()
@@ -815,6 +942,29 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
             .ok();
     });
 
+    // Widgets (`WidgetHost`, Android UI thread). Ids left by an add that never
+    // finished, or by entries dropped from the config, are deleted.
+    log_error(
+        "prune widgets",
+        widgets::prune(&SHOWN_CONFIG.with_borrow(|config| config.widget_ids())),
+    );
+    let weak = window.as_weak();
+    widgets::subscribe_frames(move |id| {
+        weak.upgrade_in_event_loop(move |window| apply_widget_frame(&window, id))
+            .ok();
+    });
+    let weak = window.as_weak();
+    widgets::subscribe_added(move |id, provider| {
+        let weak = weak.clone();
+        slint::invoke_from_event_loop(move || {
+            let (cell, span) = PENDING_WIDGET.take().unwrap_or((None, (1, 1)));
+            edit_home(&weak, "add widget", |config| {
+                config.add_widget(id, &provider, span, cell)
+            });
+        })
+        .ok();
+    });
+
     let launcher = window.global::<LauncherActions>();
     launcher.on_open_settings(|| log_error("open settings", activity::open_settings()));
     launcher.on_open_wallpaper_picker(|| {
@@ -903,26 +1053,81 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
         log_error("open the image picker", images::pick());
     });
     let weak = window.as_weak();
-    home.on_remove_picture(move |id| {
+    home.on_remove_picture(move |picture| {
+        let id = to_index(picture.id);
         let mut file = None;
-        let result = config::update(|config| file = config.remove_image(to_index(id)));
+        let mut widget = false;
+        let result = config::update(|config| {
+            if picture.widget {
+                widget = config.remove_widget(id);
+            } else {
+                file = config.remove_image(id);
+            }
+        });
         // Only once it's no longer in the saved config.
         if let (Ok(_), Some(file)) = (&result, file) {
             log_error("delete picture image", images::delete(&file));
         }
+        if result.is_ok() && widget {
+            log_error("delete widget", widgets::remove(id));
+        }
         let result = result.and_then(|_| weak.upgrade().map_or(Ok(()), |window| refresh(&window)));
         log_error("remove picture", result);
     });
-    home.on_can_resize_picture(|id, columns, rows| {
+    home.on_can_resize_picture(|picture, columns, rows| {
         SHOWN_CONFIG.with_borrow(|config| {
-            config.can_resize_image(to_index(id), to_index(columns), to_index(rows))
+            config.can_resize(&picture.key(), to_index(columns), to_index(rows))
         })
     });
     let weak = window.as_weak();
-    home.on_resize_picture(move |id, columns, rows| {
+    home.on_resize_picture(move |picture, columns, rows| {
         edit_home(&weak, "resize picture", |config| {
-            config.resize_image(to_index(id), to_index(columns), to_index(rows))
+            config.resize(&picture.key(), to_index(columns), to_index(rows))
         });
+    });
+
+    home.on_grid_metrics(|cell_width, cell_height, row_gap, inset| {
+        GRID_METRICS.set(((cell_width, cell_height), row_gap, inset));
+    });
+    let weak = window.as_weak();
+    home.on_open_widget_picker(move |page, col, row| {
+        let cell = (page >= 0 && col >= 0 && row >= 0).then(|| slot(false, page, col, row));
+        WIDGET_PICKER_SLOT.set(cell);
+        if let Some(window) = weak.upgrade() {
+            window.set_widget_picker_open(true);
+            load_widget_providers(&window);
+        }
+    });
+    home.on_add_widget(|provider| {
+        PENDING_WIDGET.set(Some((
+            WIDGET_PICKER_SLOT.get(),
+            (to_index(provider.columns), to_index(provider.rows)),
+        )));
+        log_error("add widget", widgets::add(&provider.component));
+    });
+    let weak = window.as_weak();
+    home.on_widget_size(move |id, width, height| {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let width = to_physical(&window, width).round() as i32;
+        let height = to_physical(&window, height).round() as i32;
+        log_error("lay out widget", widgets::show(to_index(id), width, height));
+    });
+    let weak = window.as_weak();
+    home.on_widget_touch(move |id, action, x, y| {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        log_error(
+            "forward widget touch",
+            widgets::touch(
+                to_index(id),
+                action,
+                to_physical(&window, x),
+                to_physical(&window, y),
+            ),
+        );
     });
     home.on_can_resize_folder(|id, large| {
         SHOWN_CONFIG.with_borrow(|config| config.can_resize_folder(to_index(id), large))

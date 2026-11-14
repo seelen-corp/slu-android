@@ -288,11 +288,24 @@ pub struct HomeImage {
     pub rows: u32,
 }
 
+/// An Android app widget (`widgets.rs`), on the Home grid only, like an image:
+/// it covers `columns` x `rows` cells from its slot (the top-left cell).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeWidget {
+    /// The id the system gave it (`AppWidgetHost.allocateAppWidgetId`), unique.
+    pub id: u32,
+    /// Flattened component name of its provider (`package/class`).
+    pub provider: String,
+    pub columns: u32,
+    pub rows: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HomeContent {
     App(AppRef),
     Folder(Folder),
     Image(HomeImage),
+    Widget(HomeWidget),
 }
 
 /// Identifies an entry of Home (e.g. the one being dragged).
@@ -301,6 +314,7 @@ pub enum EntryKey {
     App(AppRef),
     Folder(u32),
     Image(u32),
+    Widget(u32),
 }
 
 impl HomeContent {
@@ -309,6 +323,7 @@ impl HomeContent {
             Self::App(app) => EntryKey::App(app.clone()),
             Self::Folder(folder) => EntryKey::Folder(folder.id),
             Self::Image(image) => EntryKey::Image(image.id),
+            Self::Widget(widget) => EntryKey::Widget(widget.id),
         }
     }
 
@@ -317,28 +332,42 @@ impl HomeContent {
         match self {
             Self::App(a) => a == app,
             Self::Folder(folder) => folder.apps.contains(app),
-            Self::Image(_) => false,
+            Self::Image(_) | Self::Widget(_) => false,
         }
     }
 
-    /// Cells covered (columns, rows): only images and large folders cover more
-    /// than one.
+    /// Cells covered (columns, rows): only images, widgets and large folders
+    /// cover more than one.
     pub fn span(&self) -> (u32, u32) {
         match self {
             Self::Image(image) => (image.columns, image.rows),
+            Self::Widget(widget) => (widget.columns, widget.rows),
             Self::Folder(folder) if folder.large => LARGE_FOLDER_SPAN,
             _ => (1, 1),
         }
     }
 
-    pub fn is_image(&self) -> bool {
-        matches!(self, Self::Image(_))
+    /// An image or a widget: only shown on the grid (not in the dock or the
+    /// list views), and resizable.
+    pub fn is_grid_only(&self) -> bool {
+        matches!(self, Self::Image(_) | Self::Widget(_))
     }
 
-    /// An image or a large folder: it never makes room for the others (see
-    /// `move_to`), and it's never in the dock.
+    /// An image, a widget or a large folder: it never makes room for the others
+    /// (see `move_to`), and it's never in the dock.
     fn keeps_its_cells(&self) -> bool {
-        self.is_image() || self.span() != (1, 1)
+        self.is_grid_only() || self.span() != (1, 1)
+    }
+
+    /// Makes an image or a widget cover `columns` x `rows` cells. False (and
+    /// nothing changes) for anything else.
+    fn set_span(&mut self, columns: u32, rows: u32) -> bool {
+        match self {
+            Self::Image(image) => (image.columns, image.rows) = (columns, rows),
+            Self::Widget(widget) => (widget.columns, widget.rows) = (columns, rows),
+            _ => return false,
+        }
+        true
     }
 }
 
@@ -595,12 +624,13 @@ impl Config {
         )
     }
 
-    /// An image bigger than the grid (e.g. made smaller in Settings) shrinks to
-    /// it; a large folder that doesn't fit becomes a single cell.
+    /// An image or widget bigger than the grid (e.g. made smaller in Settings)
+    /// shrinks to it; a large folder that doesn't fit becomes a single cell.
     fn clamp_span(&self, content: &mut HomeContent) {
         match content {
-            HomeContent::Image(image) => {
-                (image.columns, image.rows) = self.clamped_span((image.columns, image.rows));
+            HomeContent::Image(_) | HomeContent::Widget(_) => {
+                let (columns, rows) = self.clamped_span(content.span());
+                content.set_span(columns, rows);
             }
             HomeContent::Folder(folder) if folder.large => {
                 folder.large = self.clamped_span(LARGE_FOLDER_SPAN) == LARGE_FOLDER_SPAN;
@@ -702,8 +732,8 @@ impl Config {
                 None
             }
             HomeContent::App(other) => Some(vec![other.clone(), app.clone()]),
-            // Nothing goes into an image (`move_to` refuses it too).
-            HomeContent::Image(_) => return,
+            // Nothing goes into an image or a widget (`move_to` refuses it too).
+            HomeContent::Image(_) | HomeContent::Widget(_) => return,
         };
         if let Some(apps) = pair {
             entry.content = HomeContent::Folder(Folder {
@@ -902,20 +932,70 @@ impl Config {
         }
     }
 
-    /// An image can cover `columns` x `rows` cells from its slot: they fit in
-    /// the grid and no other entry is on them.
-    pub fn can_resize_image(&self, id: u32, columns: u32, rows: u32) -> bool {
-        let Some(index) = self.position(&EntryKey::Image(id)) else {
-            return false;
-        };
-        let entry = &self.home[index];
-        let resized = HomeContent::Image(HomeImage {
+    /// Puts a widget (already bound to its provider, see `widgets.rs`) on the
+    /// grid, `span` cells big (reduced to the grid): at `preferred` if those
+    /// cells are free, otherwise in the first free area. No-op if it's there.
+    pub fn add_widget(
+        &mut self,
+        id: u32,
+        provider: &str,
+        span: (u32, u32),
+        preferred: Option<Slot>,
+    ) {
+        if self.position(&EntryKey::Widget(id)).is_some() {
+            return;
+        }
+        let (columns, rows) = self.clamped_span(span);
+        let content = HomeContent::Widget(HomeWidget {
             id,
-            file: String::new(),
+            provider: provider.replace(['\n', '\r'], ""),
             columns,
             rows,
         });
-        self.fits(&resized, entry.slot)
+        let slot = preferred
+            .filter(|&slot| {
+                self.fits(&content, slot)
+                    && !self
+                        .home
+                        .iter()
+                        .any(|entry| entry.overlaps(slot, (columns, rows)))
+            })
+            .unwrap_or_else(|| self.first_free_area((columns, rows)));
+        self.home.push(HomeEntry { content, slot });
+        self.compact_pages();
+    }
+
+    /// Removes a widget from Home. Returns whether it was there.
+    pub fn remove_widget(&mut self, id: u32) -> bool {
+        let Some(index) = self.position(&EntryKey::Widget(id)) else {
+            return false;
+        };
+        self.home.remove(index);
+        self.compact_pages();
+        true
+    }
+
+    /// Ids of the widgets on Home.
+    pub fn widget_ids(&self) -> Vec<u32> {
+        self.home
+            .iter()
+            .filter_map(|entry| match &entry.content {
+                HomeContent::Widget(widget) => Some(widget.id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An image or a widget can cover `columns` x `rows` cells from its slot:
+    /// they fit in the grid and no other entry is on them.
+    pub fn can_resize(&self, key: &EntryKey, columns: u32, rows: u32) -> bool {
+        let Some(index) = self.position(key) else {
+            return false;
+        };
+        let entry = &self.home[index];
+        let mut resized = entry.content.clone();
+        resized.set_span(columns, rows)
+            && self.fits(&resized, entry.slot)
             && !self
                 .home
                 .iter()
@@ -923,18 +1003,14 @@ impl Config {
                 .any(|(i, other)| i != index && other.overlaps(entry.slot, (columns, rows)))
     }
 
-    /// Makes an image cover `columns` x `rows` cells (see `can_resize_image`).
-    pub fn resize_image(&mut self, id: u32, columns: u32, rows: u32) {
-        if !self.can_resize_image(id, columns, rows) {
+    /// Makes an image or a widget cover `columns` x `rows` cells (see
+    /// `can_resize`).
+    pub fn resize(&mut self, key: &EntryKey, columns: u32, rows: u32) {
+        if !self.can_resize(key, columns, rows) {
             return;
         }
-        for entry in &mut self.home {
-            if let HomeContent::Image(image) = &mut entry.content
-                && image.id == id
-            {
-                image.columns = columns;
-                image.rows = rows;
-            }
+        if let Some(index) = self.position(key) {
+            self.home[index].content.set_span(columns, rows);
         }
     }
 
@@ -970,7 +1046,7 @@ impl Config {
         let images: Vec<HomeEntry> = self
             .home
             .iter()
-            .filter(|entry| entry.content.is_image())
+            .filter(|entry| entry.content.is_grid_only())
             .cloned()
             .collect();
         let slots: Vec<Slot> = order.iter().map(|&i| self.home[i].slot).collect();
@@ -984,7 +1060,7 @@ impl Config {
         let moved = contents.remove(from);
         let index = if index > from { index - 1 } else { index };
         contents.insert(index.min(contents.len()), moved);
-        // Images first: they keep their cells whatever lands next to them. A
+        // Images and widgets first: they keep their cells whatever lands next to them. A
         // large folder that lands where its cells don't fit or are taken moves
         // (or the entries in its way do, see `normalize`).
         self.home = images
@@ -1000,10 +1076,10 @@ impl Config {
     }
 
     /// Indexes of `home` in list order: the grid page by page, then the dock.
-    /// Images are only shown on the grid: they're not in the list.
+    /// Images and widgets are only shown on the grid: they're not in the list.
     pub fn list_order(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.home.len())
-            .filter(|&i| !self.home[i].content.is_image())
+            .filter(|&i| !self.home[i].content.is_grid_only())
             .collect();
         order.sort_by_key(|&i| self.home[i].slot);
         order
@@ -1030,6 +1106,7 @@ impl Config {
         let mut seen_apps: Vec<AppRef> = Vec::new();
         let mut seen_folders: Vec<u32> = Vec::new();
         let mut seen_images: Vec<u32> = Vec::new();
+        let mut seen_widgets: Vec<u32> = Vec::new();
         let mut kept: Vec<HomeEntry> = Vec::with_capacity(self.home.len());
         let mut misplaced: Vec<HomeContent> = Vec::new();
         for mut entry in std::mem::take(&mut self.home) {
@@ -1059,6 +1136,13 @@ impl Config {
                     }
                     seen_images.push(image.id);
                 }
+                // The id is the system's: a duplicate can't get another one.
+                HomeContent::Widget(widget) => {
+                    if seen_widgets.contains(&widget.id) {
+                        continue;
+                    }
+                    seen_widgets.push(widget.id);
+                }
             }
             self.clamp_span(&mut entry.content);
             let span = entry.content.span();
@@ -1087,7 +1171,7 @@ impl Config {
                 folder.apps.retain(|app| installed(app));
                 true
             }
-            HomeContent::Image(_) => true,
+            HomeContent::Image(_) | HomeContent::Widget(_) => true,
         });
         self.dissolve_small_folders();
     }
@@ -1214,6 +1298,11 @@ impl Config {
                         config.home.push(entry);
                     }
                 }
+                "widget" => {
+                    if let Some(entry) = parse_widget_entry(value) {
+                        config.home.push(entry);
+                    }
+                }
                 "folder_large" => {
                     if let Ok(id) = value.parse::<u32>() {
                         large_folders.push(id);
@@ -1303,6 +1392,12 @@ impl Config {
                         image.id, image.columns, image.rows, image.file
                     ));
                 }
+                HomeContent::Widget(widget) => {
+                    text.push_str(&format!(
+                        "widget={slot},{},{},{},{}\n",
+                        widget.id, widget.columns, widget.rows, widget.provider
+                    ));
+                }
             }
         }
         text
@@ -1348,6 +1443,25 @@ fn parse_image_entry(value: &str) -> Option<HomeEntry> {
         content: HomeContent::Image(HomeImage {
             id,
             file: file.to_owned(),
+            columns,
+            rows,
+        }),
+        slot,
+    })
+}
+
+/// `<slot>,<id>,<columns>,<rows>,<provider>` (`<slot>` as in `parse_home_entry`).
+fn parse_widget_entry(value: &str) -> Option<HomeEntry> {
+    let (slot, rest) = parse_slot(value)?;
+    let mut parts = rest.splitn(4, ',');
+    let id = parts.next()?.trim().parse().ok()?;
+    let columns = parts.next()?.trim().parse().ok()?;
+    let rows = parts.next()?.trim().parse().ok()?;
+    let provider = parts.next()?.trim();
+    (!provider.is_empty()).then(|| HomeEntry {
+        content: HomeContent::Widget(HomeWidget {
+            id,
+            provider: provider.to_owned(),
             columns,
             rows,
         }),
@@ -1734,11 +1848,56 @@ mod tests {
     fn image_roundtrip_and_bad_files() {
         let mut config = Config::default();
         config.add_image("img-1.jpg", Some(cell(0, 1, 1)));
-        config.resize_image(0, 2, 3);
+        config.resize(&EntryKey::Image(0), 2, 3);
         assert_eq!(image_at(&config, 0), (cell(0, 1, 1), (2, 3)));
         assert_eq!(Config::parse(&config.serialize()), config);
         let parsed = Config::parse("image=grid,0,0,0,0,1,1,../x\nimage=grid,0,0,0,1,1,1,\n");
         assert!(parsed.home.is_empty());
+    }
+
+    fn widget_at(config: &Config, id: u32) -> (Slot, (u32, u32)) {
+        let entry = &config.home[config.position(&EntryKey::Widget(id)).unwrap()];
+        (entry.slot, entry.content.span())
+    }
+
+    #[test]
+    fn widget_roundtrip_resize_and_remove() {
+        let mut config = Config::default();
+        config.add_widget(42, "com.example/.ClockWidget", (2, 2), Some(cell(0, 1, 1)));
+        assert_eq!(widget_at(&config, 42), (cell(0, 1, 1), (2, 2)));
+        // Already there: nothing changes.
+        config.add_widget(42, "com.example/.ClockWidget", (1, 1), None);
+        assert_eq!(config.widget_ids(), vec![42]);
+        assert!(config.can_resize(&EntryKey::Widget(42), 3, 1));
+        config.resize(&EntryKey::Widget(42), 3, 1);
+        assert_eq!(widget_at(&config, 42), (cell(0, 1, 1), (3, 1)));
+        assert_eq!(Config::parse(&config.serialize()), config);
+        // Never in the dock, nothing goes into it, not in the list views.
+        assert!(!config.can_move(&EntryKey::Widget(42), Slot::Dock { col: 0 }));
+        assert!(config.list_order().is_empty());
+        assert!(config.remove_widget(42));
+        assert!(config.home.is_empty());
+        assert!(Config::parse("widget=grid,0,0,0,7,1,1,\n").home.is_empty());
+    }
+
+    #[test]
+    fn widget_bigger_than_the_grid_or_on_taken_cells() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        // Its cells are taken: the first free area instead.
+        config.add_widget(1, "a/.W", (2, 1), Some(cell(0, 0, 0)));
+        assert_eq!(widget_at(&config, 1), (cell(0, 0, 1), (2, 1)));
+        // Reduced to the grid.
+        config.add_widget(2, "a/.W", (99, 99), None);
+        assert_eq!(
+            widget_at(&config, 2).1,
+            (DEFAULT_HOME_COLUMNS, DEFAULT_HOME_ROWS)
+        );
+        // A duplicated id is dropped.
+        let mut duplicated =
+            Config::parse("widget=grid,0,0,0,5,1,1,a/.W\nwidget=grid,0,1,0,5,1,1,a/.W\n");
+        assert!(duplicated.normalize());
+        assert_eq!(duplicated.widget_ids(), vec![5]);
     }
 
     #[test]
@@ -1760,13 +1919,13 @@ mod tests {
         config.add_image("a.png", None);
         config.add_to_home(app(1), all);
         // Image at (0,0,0), app at (0,0,1).
-        assert!(!config.can_resize_image(0, 2, 1));
-        assert!(config.can_resize_image(0, 1, 2));
-        assert!(!config.can_resize_image(0, 1, DEFAULT_HOME_ROWS + 1));
-        assert!(!config.can_resize_image(0, 0, 1));
-        config.resize_image(0, 2, 2);
+        assert!(!config.can_resize(&EntryKey::Image(0), 2, 1));
+        assert!(config.can_resize(&EntryKey::Image(0), 1, 2));
+        assert!(!config.can_resize(&EntryKey::Image(0), 1, DEFAULT_HOME_ROWS + 1));
+        assert!(!config.can_resize(&EntryKey::Image(0), 0, 1));
+        config.resize(&EntryKey::Image(0), 2, 2);
         assert_eq!(image_at(&config, 0).1, (1, 1));
-        config.resize_image(0, 1, 5);
+        config.resize(&EntryKey::Image(0), 1, 5);
         assert_eq!(image_at(&config, 0).1, (1, 5));
         // Its cells are taken: new apps go around it.
         config.add_to_home(app(2), all);
@@ -1777,7 +1936,7 @@ mod tests {
     fn apps_dont_move_onto_images() {
         let mut config = Config::default();
         config.add_image("a.png", None);
-        config.resize_image(0, 2, 2);
+        config.resize(&EntryKey::Image(0), 2, 2);
         config.add_to_home(app(1), all);
         // App at (0,0,2).
         assert!(!config.can_move(&key(1), cell(0, 1, 1)));
@@ -1791,7 +1950,7 @@ mod tests {
     fn moved_image_displaces_apps_into_its_old_cells() {
         let mut config = Config::default();
         config.add_image("a.png", None);
-        config.resize_image(0, 2, 1);
+        config.resize(&EntryKey::Image(0), 2, 1);
         config.add_to_home(app(1), all);
         config.add_to_home(app(2), all);
         // Image (0,0,0)-(0,0,1), apps at (0,0,2) and (0,0,3).

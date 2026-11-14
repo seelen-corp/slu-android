@@ -1,0 +1,142 @@
+import { ScrollView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Tokens } from "../tokens.slint";
+import { HomeActions } from "../app-actions.slint";
+import { WidgetProviderItem } from "../types.slint";
+
+// A provider of the picker: its preview, label and size. Tapping it adds it.
+component ProviderRow inherits Rectangle {
+    in property <WidgetProviderItem> provider;
+
+    callback picked();
+
+    // Concentric with the sheet (radius-l around a spacing-xs padding).
+    border-radius: max(0px, Tokens.radius-l - Tokens.spacing-xs);
+    background: touch.pressed ? Tokens.slu-std-ui-pressed-overlay : transparent;
+
+    accessible-role: button;
+    accessible-label: root.provider.label;
+    accessible-action-default => { root.picked(); }
+
+    HorizontalLayout {
+        padding: Tokens.spacing-s;
+        spacing: Tokens.spacing-s;
+
+        Image {
+            width: 96px;
+            height: 72px;
+            source: root.provider.preview;
+            image-fit: contain;
+            accessible-role: none;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Tokens.spacing-2xs;
+
+            Text {
+                text: root.provider.label;
+                font-size: 1rem;
+                color: Tokens.slu-std-fg-color;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.provider.size;
+                font-size: 0.875rem;
+                color: Tokens.slu-std-fg-secondary-color;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.picked(); }
+    }
+}
+
+// Widget picker: every installed widget provider, grouped by app, on a sheet
+// over Home (behind the scrim). Tapping one adds it; tapping outside the sheet
+// or Back closes it.
+export component WidgetPickerPage inherits Rectangle {
+    in property <[WidgetProviderItem]> providers: [];
+    // The providers are still being loaded.
+    in property <bool> loading: false;
+    in property <length> top-inset: 0px;
+    in property <length> bottom-inset: 0px;
+
+    callback close();
+
+    // Outside the sheet: like the outside of a modal.
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    sheet := Rectangle {
+        x: Tokens.spacing-m;
+        y: root.top-inset + Tokens.spacing-2xl;
+        width: root.width - 2 * Tokens.spacing-m;
+        height: root.height - self.y - root.bottom-inset - Tokens.spacing-m;
+        background: Tokens.slu-std-bg-color;
+        border-radius: Tokens.radius-l;
+        drop-shadow-offset-x: Tokens.shadow-l-offset;
+        drop-shadow-offset-y: Tokens.shadow-l-offset;
+        drop-shadow-blur: Tokens.shadow-l-blur;
+        drop-shadow-color: Tokens.shadow-l-color;
+
+        // Taps on the sheet don't close it.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Tokens.spacing-xs;
+            spacing: Tokens.spacing-xs;
+
+            Text {
+                text: I18n.t("widgets.picker_title");
+                font-size: 1.25rem;
+                font-weight: 600;
+                color: Tokens.slu-std-fg-color;
+                horizontal-alignment: center;
+            }
+
+            if root.loading || root.providers.length == 0: Text {
+                vertical-stretch: 1;
+                text: root.loading ? I18n.t("widgets.loading") : I18n.t("widgets.empty");
+                font-size: 1rem;
+                color: Tokens.slu-std-fg-secondary-color;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            if !root.loading && root.providers.length > 0: ScrollView {
+                vertical-stretch: 1;
+                mouse-drag-pan-enabled: true;
+
+                VerticalLayout {
+                    for provider in root.providers: VerticalLayout {
+                        if provider.first-of-app: HorizontalLayout {
+                            padding-left: Tokens.spacing-s;
+                            padding-right: Tokens.spacing-s;
+                            padding-top: Tokens.spacing-m;
+
+                            Text {
+                                text: provider.app-label;
+                                font-size: 0.875rem;
+                                font-weight: 600;
+                                color: Tokens.slu-std-fg-secondary-color;
+                                overflow: elide;
+                            }
+                        }
+
+                        ProviderRow {
+                            provider: provider;
+                            picked => {
+                                HomeActions.add-widget(provider);
+                                root.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
