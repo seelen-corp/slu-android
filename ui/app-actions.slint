@@ -55,6 +55,9 @@ export global HomeActions {
     // own: they fit in the grid and nothing else is on them.
     pure callback can-resize-picture(picture: PictureItem, columns: int, rows: int) -> bool;
     callback resize-picture(picture: PictureItem, columns: int, rows: int);
+    // The image of a picture (not a widget) cropped to `width` x `height` and
+    // in the icon shape, for the shapes the UI can't clip to (squircle).
+    pure callback shaped-picture(picture: PictureItem, width: length, height: length) -> image;
     // Grid view: the size of a cell (the space between rows apart) and the
     // padding around what's drawn in it, for the default size of new widgets.
     callback grid-metrics(cell-width: length, cell-height: length, row-gap: length, inset: length);

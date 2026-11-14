@@ -333,6 +333,10 @@ fn icon_size(config: &config::Config) -> Option<f32> {
 /// its size in cells.
 type PendingWidget = (u32, Option<Slot>, (u32, u32));
 
+/// A picture of Home in the icon shape: the size (logical px) and style it was
+/// made for, and the image.
+type ShapedPicture = ((i32, i32), config::IconStyle, slint::Image);
+
 thread_local! {
     /// Rendered app icons by (package, activity, size, shape). Lives on the UI
     /// thread (`slint::Image` is not `Send`); cleared when packages change, since
@@ -348,6 +352,9 @@ thread_local! {
     static OPEN_FOLDER: Cell<Option<u32>> = const { Cell::new(None) };
     /// The icon shape alone (`AppsLayout.icon-shape`), by size and style.
     static ICON_SHAPE: RefCell<Option<(u32, config::IconStyle, slint::Image)>> = const { RefCell::new(None) };
+    /// Pictures of Home in the icon shape (`HomeActions.shaped-picture`), by id:
+    /// the last one asked.
+    static SHAPED_PICTURES: RefCell<HashMap<i32, ShapedPicture>> = Default::default();
     /// Decoded images of the pictures on Home, by file name.
     static PICTURES: RefCell<HashMap<String, slint::Image>> = Default::default();
     /// The config shown by the last `refresh`, for the checks the UI makes while
@@ -681,6 +688,14 @@ fn refresh(window: &MainWindow) -> Result<()> {
             )
         })
     });
+    SHAPED_PICTURES.with_borrow_mut(|pictures| {
+        pictures.retain(|id, (_, style, _)| {
+            *style == config.icon_style()
+                && config.home.iter().any(
+                    |entry| matches!(&entry.content, HomeContent::Image(image) if image.id as i32 == *id),
+                )
+        })
+    });
     // Frames of widgets no longer on Home.
     let widget_ids = config.widget_ids();
     WIDGET_FRAMES.with_borrow_mut(|frames| frames.retain(|id, _| widget_ids.contains(id)));
@@ -726,6 +741,8 @@ fn refresh(window: &MainWindow) -> Result<()> {
     layout.set_padding(config.apps_padding as f32);
     layout.set_label_lines(config.label_lines as i32);
     layout.set_badge_position(config.badge_position.into());
+    layout.set_icon_shape_type(config.icon_shape.into());
+    layout.set_icon_corner_radius(config.icon_corner_radius as f32 / 100.0);
 
     ALL_APPS.with_borrow_mut(|apps| *apps = items);
     SHOWN_CONFIG.with_borrow_mut(|shown| *shown = config);
@@ -1135,6 +1152,28 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
         });
     });
 
+    home.on_shaped_picture(|picture, width, height| {
+        if picture.widget || width < 1.0 || height < 1.0 {
+            return picture.source;
+        }
+        let size = (width.round() as i32, height.round() as i32);
+        let style = SHOWN_CONFIG.with_borrow(|config| config.icon_style());
+        SHAPED_PICTURES.with_borrow_mut(|pictures| {
+            if let Some((shaped_size, shaped_style, image)) = pictures.get(&picture.id)
+                && *shaped_size == size
+                && *shaped_style == style
+            {
+                return image.clone();
+            }
+            let Some(source) = picture.source.to_rgba8() else {
+                return picture.source;
+            };
+            let shaped = icons::shape_picture(&source, width / height, style);
+            let image = slint::Image::from_rgba8(shaped);
+            pictures.insert(picture.id, (size, style, image.clone()));
+            image
+        })
+    });
     home.on_grid_metrics(|cell_width, cell_height, row_gap, inset| {
         GRID_METRICS.set(((cell_width, cell_height), row_gap, inset));
     });
@@ -1311,7 +1350,9 @@ pub extern "system" fn Java_com_seelen_slu_1launcher_HomeActivity_nativeOnImageP
             return;
         };
         let (page, cell) = PICTURE_SLOT.take();
-        edit_home(&weak, "add picture", |config| config.add_image(&file, page, cell));
+        edit_home(&weak, "add picture", |config| {
+            config.add_image(&file, page, cell)
+        });
     })
     .ok();
 }

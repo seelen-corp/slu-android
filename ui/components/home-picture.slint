@@ -2,25 +2,50 @@ import { Tokens } from "../tokens.slint";
 import { HomeActions } from "../app-actions.slint";
 import { AppItemBase } from "app-item-base.slint";
 import { GridMetrics } from "app-grid.slint";
+import { AppsLayout } from "../apps-layout.slint";
+import { IconShape, PictureItem } from "../types.slint";
 
 // The image of a picture of Home: covers its whole area (cropped, never
-// stretched), with the corners of a card. A widget's frame is drawn as it is:
-// it's already that size, with its own shape.
+// stretched). With a square icon shape (rounded square, squircle) it takes the
+// corners of that shape at its shorter side, like a large folder; with the
+// others, the corners of a card. A widget's frame is drawn as it is: it's
+// already that size, with its own shape.
 export component PictureImage inherits Rectangle {
-    in property <image> source;
-    in property <bool> widget: false;
+    in property <PictureItem> picture;
+    // Draws the pressed overlay over the image.
+    in property <bool> pressed: false;
 
-    border-radius: root.widget ? 0 : Tokens.radius-m;
-    clip: !root.widget;
+    property <bool> widget: root.picture.widget;
+    // Cropped and masked in Rust: the UI can only clip to circular corners.
+    property <bool> squircle: !root.widget && AppsLayout.icon-shape-type == IconShape.squircle;
+    property <image> source: root.squircle
+        ? HomeActions.shaped-picture(root.picture, root.width, root.height)
+        : root.picture.source;
 
-    Image {
+    border-radius: root.widget || root.squircle ? 0
+        : AppsLayout.icon-shape-type == IconShape.rounded-square
+        ? Math.min(root.width, root.height) * AppsLayout.icon-corner-radius
+        : Tokens.radius-m;
+    clip: !root.widget && !root.squircle;
+
+    image := Image {
         width: parent.width;
         height: parent.height;
         source: root.source;
         image-fit: root.widget ? fill : cover;
     }
 
-    @children
+    // Exactly over the shaped image (its transparent corners stay clear).
+    if root.pressed && root.squircle: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: image.image-fit;
+        colorize: Tokens.slu-std-ui-pressed-overlay;
+    }
+    if root.pressed && !root.widget && !root.squircle: Rectangle {
+        background: Tokens.slu-std-ui-pressed-overlay;
+    }
 }
 
 // A picture or a widget of Home (`PictureItem`), as big as the cells it covers.
@@ -60,13 +85,9 @@ export component HomePicture inherits AppItemBase {
         y: GridMetrics.cell-padding;
         width: root.content-width;
         height: root.content-height;
-        source: root.picture.source;
-        widget: root.picture.widget;
+        picture: root.picture;
+        pressed: root.pressed;
         visible: !root.content-hidden;
-
-        if root.pressed && !root.picture.widget: Rectangle {
-            background: Tokens.slu-std-ui-pressed-overlay;
-        }
     }
 }
 

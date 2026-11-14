@@ -228,12 +228,24 @@ fn shape_mask(env: &mut JNIEnv, surface: &Surface, style: IconStyle) -> Result<V
 /// Coverage (0-255) of a shape drawn by the launcher (not `IconShape::System`),
 /// anti-aliased over one pixel.
 fn custom_shape_mask(size: u32, style: IconStyle) -> Vec<u8> {
-    let half = size as f32 / 2.0;
-    let side = size as f32;
-    (0..size * size)
+    rect_shape_mask(size, size, style)
+}
+
+/// `custom_shape_mask` stretched to a `width`x`height` rectangle: the corners
+/// are those of the shape at the rectangle's shorter side, joined by straight
+/// edges (a square gets the shape itself).
+fn rect_shape_mask(width: u32, height: u32, style: IconStyle) -> Vec<u8> {
+    let side = width.min(height) as f32;
+    let half = side / 2.0;
+    // How far the straight edges move the corners away from the center.
+    let stretch_x = (width as f32 - side) / 2.0;
+    let stretch_y = (height as f32 - side) / 2.0;
+    (0..width * height)
         .map(|i| {
-            let x = (i % size) as f32 + 0.5 - half;
-            let y = (i / size) as f32 + 0.5 - half;
+            let x = (i % width) as f32 + 0.5 - width as f32 / 2.0;
+            let y = (i / width) as f32 + 0.5 - height as f32 / 2.0;
+            let x = x.signum() * (x.abs() - stretch_x).max(0.0);
+            let y = y.signum() * (y.abs() - stretch_y).max(0.0);
             // Signed distance to the edge in pixels (positive inside); approximate
             // for the squircle (exact enough for the anti-aliasing).
             let distance = match style.shape {
@@ -260,6 +272,36 @@ fn custom_shape_mask(size: u32, style: IconStyle) -> Vec<u8> {
             ((distance + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8
         })
         .collect()
+}
+
+/// A picture of Home in the icon shape, for the shapes the UI can't clip to
+/// (`IconShape::Squircle`): `source` cropped to the `aspect` (width / height)
+/// it's shown at, centered like `image-fit: cover`, with the corners of
+/// `rect_shape_mask`.
+pub fn shape_picture(
+    source: &SharedPixelBuffer<Rgba8Pixel>,
+    aspect: f32,
+    style: IconStyle,
+) -> SharedPixelBuffer<Rgba8Pixel> {
+    let (source_width, source_height) = (source.width(), source.height());
+    let (width, height) = if source_width as f32 / source_height as f32 > aspect {
+        let width = (source_height as f32 * aspect).round() as u32;
+        (width.clamp(1, source_width), source_height)
+    } else {
+        let height = (source_width as f32 / aspect).round() as u32;
+        (source_width, height.clamp(1, source_height))
+    };
+    let (left, top) = ((source_width - width) / 2, (source_height - height) / 2);
+    let pixels = source.as_slice();
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+    let out = buffer.make_mut_slice();
+    for row in 0..height {
+        let from = ((top + row) * source_width + left) as usize;
+        let to = (row * width) as usize;
+        out[to..to + width as usize].copy_from_slice(&pixels[from..from + width as usize]);
+    }
+    apply_mask(out, &rect_shape_mask(width, height, style));
+    buffer
 }
 
 /// Signed distance from `(x, y)` (relative to the center) to the edge of a
@@ -586,6 +628,28 @@ mod tests {
         let squircle = custom_shape_mask(size, style(IconShape::Squircle, 0));
         assert_eq!(at(&squircle, 1, 1), 0);
         assert_eq!(at(&squircle, 10, 10), 255);
+    }
+
+    #[test]
+    fn rect_masks_keep_the_corners_of_the_short_side() {
+        let (width, height) = (200, 100);
+        let at = |mask: &[u8], x: u32, y: u32| mask[(y * width + x) as usize];
+        let rect = rect_shape_mask(width, height, style(IconShape::Squircle, 0));
+        let square = custom_shape_mask(height, style(IconShape::Squircle, 0));
+        // The corners of the 100x100 shape, straight edges in between.
+        assert_eq!(at(&rect, 1, 1), square[101]);
+        assert_eq!(at(&rect, 1, 1), 0);
+        assert_eq!(at(&rect, 100, 0), 255);
+        assert_eq!(at(&rect, 198, 98), square[98 * 100 + 98]);
+    }
+
+    #[test]
+    fn shaped_pictures_are_cropped_to_the_aspect() {
+        let source = SharedPixelBuffer::<Rgba8Pixel>::new(300, 100);
+        let picture = shape_picture(&source, 1.0, style(IconShape::Squircle, 0));
+        assert_eq!((picture.width(), picture.height()), (100, 100));
+        let picture = shape_picture(&source, 6.0, style(IconShape::Squircle, 0));
+        assert_eq!((picture.width(), picture.height()), (300, 50));
     }
 
     #[test]

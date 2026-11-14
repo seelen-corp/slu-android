@@ -611,8 +611,11 @@ impl Config {
     ) -> Option<Slot> {
         (0..=self.home_rows.saturating_sub(rows))
             .flat_map(|row| {
-                (0..=self.home_columns.saturating_sub(columns))
-                    .map(move |col| Slot::Grid { page, row, col })
+                (0..=self.home_columns.saturating_sub(columns)).map(move |col| Slot::Grid {
+                    page,
+                    row,
+                    col,
+                })
             })
             .find(|&slot| {
                 !self.home.iter().any(|entry| {
@@ -643,7 +646,11 @@ impl Config {
         let key = content.key();
         self.home.push(HomeEntry {
             content,
-            slot: Slot::Grid { page, row: 0, col: 0 },
+            slot: Slot::Grid {
+                page,
+                row: 0,
+                col: 0,
+            },
         });
         self.relocate(&key, page);
     }
@@ -1952,7 +1959,13 @@ mod tests {
     #[test]
     fn widget_roundtrip_resize_and_remove() {
         let mut config = Config::default();
-        config.add_widget(42, "com.example/.ClockWidget", (2, 2), 0, Some(cell(0, 1, 1)));
+        config.add_widget(
+            42,
+            "com.example/.ClockWidget",
+            (2, 2),
+            0,
+            Some(cell(0, 1, 1)),
+        );
         assert_eq!(widget_at(&config, 42), (cell(0, 1, 1), (2, 2)));
         // Already there: nothing changes.
         config.add_widget(42, "com.example/.ClockWidget", (1, 1), 0, None);
@@ -2202,9 +2215,8 @@ home=grid,1,1,0,p4/p4.Main
         config.add_widget(1, "a/.W", full, 1, None);
         config.add_to_home(app(2), all);
         config.move_to(&key(2), cell(2, 0, 0), all);
-        let slot_of = |config: &Config, key: &EntryKey| {
-            config.home[config.position(key).unwrap()].slot
-        };
+        let slot_of =
+            |config: &Config, key: &EntryKey| config.home[config.position(key).unwrap()].slot;
         // Its own page when there's room.
         assert!(config.relocate(&key(1), 0));
         assert_eq!(slot_of(&config, &key(1)), cell(0, 0, 0));

@@ -492,6 +492,17 @@ final class WidgetHost {
             this.id = id;
         }
 
+        // AppWidgetHostView pads the widget by the system's default (~8dp per
+        // side, `getDefaultPaddingForWidget`), on top of the inset Home already
+        // gives every entry (`GridMetrics.cell-padding`): widgets would look
+        // smaller than the pictures and folders next to them. Launcher3 drops it
+        // the same way.
+        @Override
+        public void setAppWidget(int appWidgetId, AppWidgetProviderInfo info) {
+            super.setAppWidget(appWidgetId, info);
+            setPadding(0, 0, 0, 0);
+        }
+
         @SuppressWarnings("deprecation")
         void resize(int width, int height) {
             if (width == this.width && height == this.height) {
