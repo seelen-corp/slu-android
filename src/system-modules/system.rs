@@ -15,6 +15,41 @@ pub fn open_wallpaper_picker() -> Result<()> {
     start_action("android.intent.action.SET_WALLPAPER")
 }
 
+/// Opens `url` in the browser (`Intent.ACTION_VIEW`).
+pub fn open_url(url: &str) -> Result<()> {
+    android_ctx::with_activity(|env, activity| {
+        let url = env.new_string(url)?;
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&url)],
+            )?
+            .l()?;
+        let intent = new_intent(env, "android.intent.action.VIEW")?;
+        env.call_method(
+            &intent,
+            "setData",
+            "(Landroid/net/Uri;)Landroid/content/Intent;",
+            &[JValue::Object(&uri)],
+        )?;
+        env.call_method(
+            &intent,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[JValue::Int(FLAG_ACTIVITY_NEW_TASK)],
+        )?;
+        env.call_method(
+            activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&intent)],
+        )?;
+        Ok(())
+    })
+}
+
 /// Opens the system "Default home app" settings
 /// (`Settings.ACTION_HOME_SETTINGS`).
 pub fn open_default_launcher_settings() -> Result<()> {

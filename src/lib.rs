@@ -927,6 +927,7 @@ fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
             system::open_default_launcher_settings(),
         )
     });
+    window.on_open_url(|url| log_error("open link", system::open_url(&url)));
     window.run()?;
     Ok(())
 }

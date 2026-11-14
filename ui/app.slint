@@ -220,6 +220,7 @@ export component SettingsWindow inherits Window {
     callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
+    callback open-url(url: string);
 
     background: Tokens.slu-std-bg-color;
 
@@ -252,5 +253,6 @@ export component SettingsWindow inherits Window {
         open-notification-access => { root.open-notification-access(); }
         open-wallpaper-picker => { root.open-wallpaper-picker(); }
         open-default-launcher-settings => { root.open-default-launcher-settings(); }
+        open-url(url) => { root.open-url(url); }
     }
 }

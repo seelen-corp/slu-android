@@ -72,3 +72,8 @@ settings:
   wallpaper: Wallpaper
   default_launcher: Default home app
   change: Change
+  section_about: About
+  github: Source code (GitHub)
+  website: Website
+  discord: Discord community
+  open: Open

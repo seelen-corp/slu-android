@@ -106,6 +106,8 @@ export component ConfigPage inherits Rectangle {
     callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
+    // Opens a link of Settings > About in the browser.
+    callback open-url(url: string);
 
     // Choices of Settings > Grid columns.
     property <[int]> column-choices: [3, 4, 5, 6];
@@ -360,6 +362,40 @@ export component ConfigPage inherits Rectangle {
                 Button {
                     text: I18n.t("settings.change");
                     clicked => { root.open-default-launcher-settings(); }
+                }
+            }
+
+            SectionTitle {
+                text: I18n.t("settings.section_about");
+            }
+
+            SettingRow {
+                label: I18n.t("settings.github");
+
+                Button {
+                    text: I18n.t("settings.open");
+                    icon: @image-url("../icons/IoLogoGithub.svg");
+                    clicked => { root.open-url("https://github.com/seelen-corp/slu-android"); }
+                }
+            }
+
+            SettingRow {
+                label: I18n.t("settings.website");
+
+                Button {
+                    text: I18n.t("settings.open");
+                    icon: @image-url("../icons/IoGlobeOutline.svg");
+                    clicked => { root.open-url("https://seelen.io"); }
+                }
+            }
+
+            SettingRow {
+                label: I18n.t("settings.discord");
+
+                Button {
+                    text: I18n.t("settings.open");
+                    icon: @image-url("../icons/IoLogoDiscord.svg");
+                    clicked => { root.open-url("https://discord.seelen.io"); }
                 }
             }
         }
