@@ -65,11 +65,12 @@ Where things live:
   (`system-modules/theme.rs`, Material You tones on 12+) and set from Rust.
 - Standard components: `ui/components/` (`button`, `text-field`, `select`,
   `menu` = popover surface + items, `wallpaper-label`, `badge` = notification
-  badge, `icon`). App entries share their touch behaviour through `app-item-base.slint`.
+  badge, `icon`). App entries share their touch behaviour through
+  `app-item-base.slint`.
 - Icons: monochrome SVGs in `ui/icons/`, copied from the desktop's
   `../Seelen-UI/dist/icons` (react-icons names; prefer the `Io*` Ionicons
-  outline set). Copy only the ones used. Draw them with `Icon` (tinted with a
-  fg token, `1rem` by default) or the `icon` property of `Button`/`MenuItem`;
+  outline set). Copy only the ones used. Draw them with `Icon` (tinted with a fg
+  token, `1rem` by default) or the `icon` property of `Button`/`MenuItem`;
   `@image-url` embeds them at compile time, no Rust side needed.
 
 Launcher-specific exception (maintainer-approved): Home and the Apps Menu draw
