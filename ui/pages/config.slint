@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "../types.slint";
+import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState } from "../types.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
 import { Select } from "../components/select.slint";
 import { Slider } from "../components/slider.slint";
@@ -91,6 +91,10 @@ export component ConfigPage inherits Rectangle {
     in property <BadgePosition> badge-position: BadgePosition.top-right;
     // The launcher may read the notifications (needed by the badges).
     in property <bool> notification-access: false;
+    // Settings > Support the project (`Ads.java`).
+    in property <RewardedState> rewarded-state: RewardedState.idle;
+    // The ads consent form must be reachable again (GDPR).
+    in property <bool> ad-privacy-options: false;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
@@ -108,6 +112,8 @@ export component ConfigPage inherits Rectangle {
     callback open-default-launcher-settings();
     // Opens a link of Settings > About in the browser.
     callback open-url(url: string);
+    callback watch-rewarded-ad();
+    callback open-ad-privacy-options();
 
     // Choices of Settings > Grid columns.
     property <[int]> column-choices: [3, 4, 5, 6];
@@ -396,6 +402,42 @@ export component ConfigPage inherits Rectangle {
                     text: I18n.t("settings.open");
                     icon: @image-url("../icons/IoLogoDiscord.svg");
                     clicked => { root.open-url("https://discord.seelen.io"); }
+                }
+            }
+
+            VerticalLayout {
+                spacing: Tokens.spacing-2xs;
+
+                SettingRow {
+                    label: I18n.t("settings.support");
+
+                    Button {
+                        text: root.rewarded-state == RewardedState.loading
+                            ? I18n.t("settings.support_loading")
+                            : I18n.t("settings.support_watch_ad");
+                        icon: @image-url("../icons/IoHeartOutline.svg");
+                        enabled: root.rewarded-state != RewardedState.loading;
+                        clicked => { root.watch-rewarded-ad(); }
+                    }
+                }
+
+                Text {
+                    text: root.rewarded-state == RewardedState.thanks ? I18n.t("settings.support_thanks")
+                        : root.rewarded-state == RewardedState.failed ? I18n.t("settings.support_failed")
+                        : I18n.t("settings.support_hint");
+                    font-size: 0.875rem;
+                    color: Tokens.slu-std-fg-secondary-color;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.ad-privacy-options: SettingRow {
+                label: I18n.t("settings.ad_privacy");
+
+                Button {
+                    text: I18n.t("settings.change");
+                    icon: @image-url("../icons/IoShieldCheckmarkOutline.svg");
+                    clicked => { root.open-ad-privacy-options(); }
                 }
             }
         }

@@ -4,14 +4,14 @@ import { ConfigPage } from "pages/config.slint";
 import { FolderPage } from "pages/folder.slint";
 import { WidgetPickerPage } from "pages/widget-picker.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition } from "types.slint";
+import { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState } from "types.slint";
 import { HomeActions, Interaction, LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
 export { AppsLayout } from "apps-layout.slint";
-export { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition }
+export { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
@@ -205,6 +205,12 @@ export component SettingsWindow inherits Window {
     in property <int> label-lines: 1;
     in property <BadgePosition> badge-position: BadgePosition.top-right;
     in property <bool> notification-access: false;
+    // Height of the ad banner above the bottom system bar (`Ads.java`, drawn
+    // by Android over this window); 0 without banner.
+    in property <length> ad-banner-height: 0px;
+    in property <RewardedState> rewarded-state: RewardedState.idle;
+    // The ads consent form must be reachable again (GDPR).
+    in property <bool> ad-privacy-options: false;
 
     callback launcher-screens-changed(value: LauncherScreens);
     callback apps-view-changed(value: AppsView);
@@ -221,12 +227,18 @@ export component SettingsWindow inherits Window {
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
     callback open-url(url: string);
+    callback watch-rewarded-ad();
+    callback open-ad-privacy-options();
 
     background: Tokens.slu-std-bg-color;
 
     ConfigPage {
         top-inset: root.safe-area-insets.top;
-        bottom-inset: root.safe-area-insets.bottom;
+        bottom-inset: root.safe-area-insets.bottom + root.ad-banner-height;
+        rewarded-state: root.rewarded-state;
+        ad-privacy-options: root.ad-privacy-options;
+        watch-rewarded-ad => { root.watch-rewarded-ad(); }
+        open-ad-privacy-options => { root.open-ad-privacy-options(); }
         launcher-screens: root.launcher-screens;
         apps-view: root.apps-view;
         swipe-down-action: root.swipe-down-action;

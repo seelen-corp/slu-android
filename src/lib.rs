@@ -9,8 +9,8 @@ use error::Result;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use system_modules::config::{AppRef, EntryKey, HomeContent, Slot};
 use system_modules::{
-    activity, android_ctx, apps, badges, config, icons, images, locale, system, theme, widget_gpu,
-    widgets,
+    activity, ads, android_ctx, apps, badges, config, icons, images, locale, system, theme,
+    widget_gpu, widgets,
 };
 
 slint::include_modules!();
@@ -948,8 +948,35 @@ fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
         )
     });
     window.on_open_url(|url| log_error("open link", system::open_url(&url)));
+
+    // Ads (`Ads.java`, Android UI thread).
+    let weak = window.as_weak();
+    ads::subscribe(move |event| {
+        weak.upgrade_in_event_loop(move |window| match event {
+            ads::AdEvent::BannerHeight(height) => window.set_ad_banner_height(height),
+            ads::AdEvent::Rewarded(state) => window.set_rewarded_state(state.into()),
+            ads::AdEvent::PrivacyOptions(required) => window.set_ad_privacy_options(required),
+        })
+        .ok();
+    });
+    window.on_watch_rewarded_ad(|| log_error("show rewarded ad", ads::show_rewarded()));
+    window.on_open_ad_privacy_options(|| {
+        log_error("open ad privacy options", ads::show_privacy_options())
+    });
+
     window.run()?;
     Ok(())
+}
+
+impl From<ads::RewardedState> for RewardedState {
+    fn from(value: ads::RewardedState) -> Self {
+        match value {
+            ads::RewardedState::Idle => Self::Idle,
+            ads::RewardedState::Loading => Self::Loading,
+            ads::RewardedState::Failed => Self::Failed,
+            ads::RewardedState::Thanks => Self::Thanks,
+        }
+    }
 }
 
 fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {

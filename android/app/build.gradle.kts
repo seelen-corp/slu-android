@@ -15,6 +15,21 @@ val cargoVersionCode: Int = run {
     major * 10000 + minor * 100 + patch
 }
 
+// AdMob ids (Settings only, see Ads.java). Not secret: they ship inside the
+// APK anyway. Debug builds always use Google's test ids (real ads must never
+// be clicked while developing).
+object AdMobTestIds {
+    const val APP = "ca-app-pub-3940256099942544~3347511713"
+    const val BANNER = "ca-app-pub-3940256099942544/9214589741"
+    const val REWARDED = "ca-app-pub-3940256099942544/5224354917"
+}
+
+object AdMobIds {
+    const val APP = "ca-app-pub-4459622307906677~8893870313"
+    const val BANNER = "ca-app-pub-4459622307906677/7489289302"
+    const val REWARDED = "ca-app-pub-4459622307906677/1519932274"
+}
+
 android {
     namespace = "com.seelen.slu_launcher"
     compileSdk = 34
@@ -25,6 +40,10 @@ android {
         targetSdk = 34
         versionCode = cargoVersionCode
         versionName = cargoVersion
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
@@ -40,11 +59,25 @@ android {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["admobAppId"] = AdMobTestIds.APP
+            buildConfigField("String", "ADMOB_BANNER_ID", "\"${AdMobTestIds.BANNER}\"")
+            buildConfigField("String", "ADMOB_REWARDED_ID", "\"${AdMobTestIds.REWARDED}\"")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
+            manifestPlaceholders["admobAppId"] = AdMobIds.APP
+            buildConfigField("String", "ADMOB_BANNER_ID", "\"${AdMobIds.BANNER}\"")
+            buildConfigField("String", "ADMOB_REWARDED_ID", "\"${AdMobIds.REWARDED}\"")
         }
     }
+}
+
+dependencies {
+    // Ads of the Settings screen (Ads.java) and their consent form (GDPR).
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.1.0")
 }
 
 // Builds the Rust crate (the repo root, one level above android/) into a

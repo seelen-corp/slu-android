@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod ads;
 pub mod android_ctx;
 pub mod apps;
 pub mod badges;

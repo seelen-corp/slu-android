@@ -134,3 +134,13 @@ export enum BadgePosition {
     bottom-left,
     bottom-right,
 }
+
+// Settings > Support the project: the rewarded ad (`ads::RewardedState`).
+export enum RewardedState {
+    idle,
+    loading,
+    // No ad could be loaded or shown.
+    failed,
+    // Watched to the end.
+    thanks,
+}

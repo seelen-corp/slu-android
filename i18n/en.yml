@@ -76,4 +76,11 @@ settings:
   github: Source code (GitHub)
   website: Website
   discord: Discord community
+  support: Support the project
+  support_watch_ad: Watch an ad
+  support_loading: Loading…
+  support_hint: Watch a short ad to support the development of Seelen UI.
+  support_failed: No ad is available right now. Try again later.
+  support_thanks: Thank you for your support!
+  ad_privacy: Ad privacy options
   open: Open

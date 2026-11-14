@@ -34,6 +34,13 @@
     android:label="Seelen UI Launcher"
     android:icon="@mipmap/ic_launcher">
     <!--
+      AdMob app id (app/build.gradle.kts). Ads are only shown in Settings
+      (Ads.java), never on Home.
+    -->
+    <meta-data
+      android:name="com.google.android.gms.ads.APPLICATION_ID"
+      android:value="${admobAppId}" />
+    <!--
       HomeActivity (a thin android.app.NativeActivity subclass, see
       SluNativeActivity): loads our native library (android:value below)
       via JNI and forwards the Activity lifecycle to it. Almost all app
