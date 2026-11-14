@@ -2,8 +2,12 @@ package com.seelen.slu_launcher;
 
 import android.app.NativeActivity;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
 import android.view.HapticFeedbackConstants;
+import android.view.Surface;
+import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.Window;
 
@@ -28,6 +32,41 @@ public class SluNativeActivity extends NativeActivity {
             | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        super.surfaceCreated(holder);
+        requestPeakRefreshRate(holder.getSurface());
+    }
+
+    /**
+     * Votes for the display's highest refresh rate (e.g. 120Hz) for our surface.
+     * Without it some systems keep unknown apps at 60Hz. It's only a vote:
+     * SurfaceFlinger ignores it while the surface isn't drawing (idle Home), so
+     * the display still drops its rate when nothing moves.
+     */
+    private void requestPeakRefreshRate(Surface surface) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || surface == null || !surface.isValid()) {
+            return;
+        }
+        Display display = getDisplay();
+        if (display == null) {
+            return;
+        }
+        Display.Mode current = display.getMode();
+        float peak = current.getRefreshRate();
+        for (Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getPhysicalWidth() == current.getPhysicalWidth()
+                && mode.getPhysicalHeight() == current.getPhysicalHeight()) {
+                peak = Math.max(peak, mode.getRefreshRate());
+            }
+        }
+        try {
+            surface.setFrameRate(peak, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            // Not fatal: the system just picks the rate itself.
+        }
     }
 
     /**

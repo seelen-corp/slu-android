@@ -18,8 +18,19 @@ rust-i18n = "4.2.1"
 [build-dependencies]
 slint-build = "1.15.0"
 
+# Dependencies (Slint's bindings, layout, animations, input) optimized even in
+# debug builds: unoptimized they can't keep up with a 120Hz screen.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
 [profile.release]
-opt-level = "z"
+# Speed over size: "z" makes Slint's per-frame work (bindings, layout, item
+# tree traversal) noticeably slower.
+opt-level = 3
+codegen-units = 1
 lto = true
 strip = true
 panic = "abort"

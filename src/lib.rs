@@ -34,6 +34,17 @@ fn current_locale() -> String {
     })
 }
 
+/// Slint's Android backend only wakes up every 10ms while an animation runs
+/// (hardcoded), which on a 120Hz screen gives uneven ~60-90fps motion. Called
+/// after each frame: while animating, a 1ms timer wakes the loop right away and
+/// `eglSwapBuffers` (vsync) paces the frames instead, at the display's refresh
+/// rate. An idle window doesn't wake up at all.
+fn pace_animation_frames(window: &slint::Window) {
+    if window.has_active_animations() {
+        slint::Timer::single_shot(std::time::Duration::from_millis(1), || {});
+    }
+}
+
 fn log_error(action: &str, result: Result<()>) {
     if let Err(err) = result {
         log::error!("failed to {action}: {err}");
@@ -843,6 +854,15 @@ fn save_setting(
 fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     let window = SettingsWindow::new()?;
     setup_i18n(window.global::<I18n>(), locale);
+    let weak = window.as_weak();
+    let notifier = window.window().set_rendering_notifier(move |state, _| {
+        if let (slint::RenderingState::AfterRendering, Some(window)) = (state, weak.upgrade()) {
+            pace_animation_frames(window.window());
+        }
+    });
+    if let Err(err) = notifier {
+        log::error!("failed to pace animation frames: {err}");
+    }
     apply_accent(window.global::<Tokens>());
     show_settings(&window, &config::load()?);
     show_notification_access(&window);
@@ -1016,6 +1036,7 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     });
     // GPU frames of the widgets live in Slint's OpenGL context (`widget_gpu`).
     let weak = window.as_weak();
+    let paced = window.as_weak();
     let notifier = window
         .window()
         .set_rendering_notifier(move |state, _| match state {
@@ -1024,7 +1045,12 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
                 log_error("redraw widgets", widgets::redraw());
             }
             slint::RenderingState::BeforeRendering => widget_gpu::before_rendering(),
-            slint::RenderingState::AfterRendering => widget_gpu::after_rendering(),
+            slint::RenderingState::AfterRendering => {
+                widget_gpu::after_rendering();
+                if let Some(window) = paced.upgrade() {
+                    pace_animation_frames(window.window());
+                }
+            }
             slint::RenderingState::RenderingTeardown => {
                 widget_gpu::teardown();
                 // Their textures are gone: no frame until they're drawn again.
