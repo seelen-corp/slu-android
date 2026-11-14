@@ -319,6 +319,9 @@ fn icon_size(config: &config::Config) -> Option<f32> {
     }
 }
 
+/// A widget being added: its grid cell (if any) and its size in cells.
+type PendingWidget = (Option<Slot>, (u32, u32));
+
 thread_local! {
     /// Rendered app icons by (package, activity, size, shape). Lives on the UI
     /// thread (`slint::Image` is not `Send`); cleared when packages change, since
@@ -345,7 +348,7 @@ thread_local! {
     static WIDGET_PICKER_SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
     /// The widget being added (`HomeActions.add-widget`, until the system
     /// reports it bound): where it goes, and its cells.
-    static PENDING_WIDGET: Cell<Option<(Option<Slot>, (u32, u32))>> = const { Cell::new(None) };
+    static PENDING_WIDGET: Cell<Option<PendingWidget>> = const { Cell::new(None) };
     /// Latest frame of each widget on Home (`widgets::take_frame`).
     static WIDGET_FRAMES: RefCell<HashMap<u32, slint::Image>> = Default::default();
     /// Grid cell size (width, height), space between rows and inset of what's

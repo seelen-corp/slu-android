@@ -83,10 +83,11 @@ fn set_counts(counts: Option<HashMap<String, u32>>) {
         }
         _ => false,
     };
-    if changed && let Ok(listener) = LISTENER.lock() {
-        if let Some(listener) = listener.as_ref() {
-            listener();
-        }
+    if changed
+        && let Ok(listener) = LISTENER.lock()
+        && let Some(listener) = listener.as_ref()
+    {
+        listener();
     }
 }
 
