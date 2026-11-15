@@ -66,11 +66,42 @@ component SliderSetting inherits VerticalLayout {
     }
 }
 
-// Section title.
-component SectionTitle inherits Text {
+// Secondary explanation under a setting.
+component SettingHint inherits Text {
     font-size: 0.875rem;
-    font-weight: 600;
     color: Tokens.slu-std-fg-secondary-color;
+    wrap: word-wrap;
+}
+
+// A group of related settings: a prominent title over a card holding its rows.
+// Elevation (manifesto §3): page = sunken, card = base, controls = raised.
+component SettingsSection inherits VerticalLayout {
+    in property <string> title;
+
+    spacing: Tokens.spacing-xs;
+
+    Text {
+        text: root.title;
+        font-size: 1.125rem;
+        font-weight: 700;
+        color: Tokens.slu-std-fg-color;
+        wrap: word-wrap;
+    }
+
+    Rectangle {
+        background: Tokens.slu-std-bg-color;
+        border-radius: Tokens.radius-m;
+        drop-shadow-offset-y: Tokens.shadow-s-offset;
+        drop-shadow-blur: Tokens.shadow-s-blur;
+        drop-shadow-color: Tokens.shadow-s-color;
+
+        VerticalLayout {
+            padding: Tokens.spacing-m;
+            spacing: Tokens.spacing-l;
+
+            @children
+        }
+    }
 }
 
 export component ConfigPage inherits Rectangle {
@@ -143,17 +174,23 @@ export component ConfigPage inherits Rectangle {
     // Item size range of the current view (`AppsView::item_size_range` in config.rs).
     property <int> item-size-min: root.apps-view == AppsView.grid ? 32 : root.apps-view == AppsView.list ? 40 : 32;
     property <int> item-size-max: root.apps-view == AppsView.grid ? 96 : root.apps-view == AppsView.list ? 120 : 96;
+    property <bool> has-home: root.launcher-screens == LauncherScreens.home-and-apps-menu;
+    // The text list shows no icons.
+    property <bool> has-icons: root.apps-view != AppsView.text-list;
 
-    background: Tokens.slu-std-bg-color;
+    // Sunken backdrop so the section cards (base surface) stand out.
+    background: Tokens.slu-std-bg-dark-color;
 
     ScrollView {
         mouse-drag-pan-enabled: true;
 
+        // Sections follow the setup flow: make it the home app, choose the
+        // screens and how apps are shown, then fine-tune, then the project info.
         VerticalLayout {
             padding: Tokens.spacing-m;
             padding-top: root.top-inset + Tokens.spacing-m;
-            padding-bottom: root.bottom-inset + Tokens.spacing-m;
-            spacing: Tokens.spacing-m;
+            padding-bottom: root.bottom-inset + Tokens.spacing-2xl;
+            spacing: Tokens.spacing-2xl;
             alignment: start;
 
             Text {
@@ -163,308 +200,307 @@ export component ConfigPage inherits Rectangle {
                 color: Tokens.slu-std-fg-color;
             }
 
-            SectionTitle {
-                text: I18n.t("settings.section_layout");
-            }
-
-            SettingRow {
-                label: I18n.t("settings.launcher_screens");
-
-                // Same order as the `LauncherScreens` enum.
-                Select {
-                    options: [
-                        I18n.t("settings.launcher_screens_apps_menu"),
-                        I18n.t("settings.launcher_screens_home_and_apps_menu"),
-                    ];
-                    current-index: root.launcher-screens == LauncherScreens.apps-menu ? 0 : 1;
-                    selected(index) => {
-                        root.launcher-screens-changed(index == 0 ? LauncherScreens.apps-menu : LauncherScreens.home-and-apps-menu);
-                    }
-                }
-            }
-
-            SettingRow {
-                label: I18n.t("settings.apps_view");
-
-                // Same order as the `AppsView` enum.
-                Select {
-                    options: [
-                        I18n.t("settings.apps_view_list"),
-                        I18n.t("settings.apps_view_text_list"),
-                        I18n.t("settings.apps_view_grid"),
-                    ];
-                    current-index: root.apps-view == AppsView.list ? 0 : root.apps-view == AppsView.text-list ? 1 : 2;
-                    selected(index) => {
-                        root.apps-view-changed(index == 0 ? AppsView.list : index == 1 ? AppsView.text-list : AppsView.grid);
-                    }
-                }
-            }
-
-            // The Apps Menu (Home has its own order).
-            SettingRow {
-                label: I18n.t("settings.group_by_letter");
-
-                Switch {
-                    checked: root.group-apps-by-letter;
-                    toggled(checked) => { root.group-apps-by-letter-changed(checked); }
-                }
-            }
-
-            // Only Home has the gesture.
-            if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
-                label: I18n.t("settings.swipe_down");
-
-                // Same order as the `SwipeDownAction` enum.
-                Select {
-                    options: [
-                        I18n.t("settings.swipe_down_search"),
-                        I18n.t("settings.swipe_down_notifications"),
-                    ];
-                    current-index: root.swipe-down-action == SwipeDownAction.search ? 0 : 1;
-                    selected(index) => {
-                        root.swipe-down-action-changed(index == 0 ? SwipeDownAction.search : SwipeDownAction.notifications);
-                    }
-                }
-            }
-
-            // Only with Home.
-            if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
-                label: I18n.t("settings.add_new_apps_to_home");
-
-                Switch {
-                    checked: root.add-new-apps-to-home;
-                    toggled(checked) => { root.add-new-apps-to-home-changed(checked); }
-                }
-            }
-
-            // Grid view: Home and the Apps Menu.
-            if root.apps-view == AppsView.grid: SettingRow {
-                label: I18n.t("settings.grid_columns");
-
-                Select {
-                    options: ["3", "4", "5", "6"];
-                    current-index: Math.max(0, root.home-columns - 3);
-                    selected(index) => { root.grid-columns-changed(root.column-choices[index]); }
-                }
-            }
-
-            SectionTitle {
-                text: I18n.t("settings.section_apps");
-            }
-
-            // The text list shows no icons.
-            if root.apps-view != AppsView.text-list: SettingRow {
-                label: I18n.t("settings.icon_shape");
-
-                // Same order as `icon-shape-choices`.
-                Select {
-                    options: [
-                        I18n.t("settings.icon_shape_system"),
-                        I18n.t("settings.icon_shape_circle"),
-                        I18n.t("settings.icon_shape_squircle"),
-                        I18n.t("settings.icon_shape_teardrop"),
-                        I18n.t("settings.icon_shape_rounded_square"),
-                    ];
-                    current-index: root.icon-shape == IconShape.circle ? 1
-                        : root.icon-shape == IconShape.squircle ? 2
-                        : root.icon-shape == IconShape.teardrop ? 3
-                        : root.icon-shape == IconShape.rounded-square ? 4
-                        : 0;
-                    selected(index) => { root.icon-shape-changed(root.icon-shape-choices[index]); }
-                }
-            }
-
-            if root.apps-view != AppsView.text-list && root.icon-shape == IconShape.rounded-square: SliderSetting {
-                label: I18n.t("settings.icon_corner_radius");
-                unit: I18n.t("settings.unit_percent");
-                minimum: 0;
-                maximum: 50;
-                value: root.icon-corner-radius;
-                changed(value) => { root.icon-corner-radius-changed(value); }
-            }
-
-            if root.apps-view != AppsView.text-list: SettingRow {
-                label: I18n.t("settings.legacy_icons");
-
-                // Same order as the `LegacyIcons` enum.
-                Select {
-                    options: [
-                        I18n.t("settings.legacy_icons_wrap"),
-                        I18n.t("settings.legacy_icons_original"),
-                    ];
-                    current-index: root.legacy-icons == LegacyIcons.wrap ? 0 : 1;
-                    selected(index) => {
-                        root.legacy-icons-changed(index == 0 ? LegacyIcons.wrap : LegacyIcons.original);
-                    }
-                }
-            }
-
-            SliderSetting {
-                label: I18n.t("settings.item_size");
-                unit: I18n.t("settings.unit_px");
-                minimum: root.item-size-min;
-                maximum: root.item-size-max;
-                value: root.item-size;
-                changed(value) => { root.item-size-changed(value); }
-            }
-
-            SettingRow {
-                label: I18n.t("settings.label_lines");
-
-                // Index = lines - 1.
-                Select {
-                    options: [
-                        I18n.t("settings.label_lines_one"),
-                        I18n.t("settings.label_lines_two"),
-                    ];
-                    current-index: root.label-lines - 1;
-                    selected(index) => {
-                        root.label-lines-changed(index + 1);
-                    }
-                }
-            }
-
-            // Range of `APPS_PADDING_RANGE` (config.rs).
-            SliderSetting {
-                label: I18n.t("settings.apps_padding");
-                unit: I18n.t("settings.unit_px");
-                minimum: 0;
-                maximum: 60;
-                value: root.apps-padding;
-                changed(value) => { root.apps-padding-changed(value); }
-            }
-
-            // Only Home shows the badges.
-            if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
-                label: I18n.t("settings.badges");
-
-                // Same order as `badge-position-choices`.
-                Select {
-                    options: [
-                        I18n.t("settings.badges_off"),
-                        I18n.t("settings.badges_top_left"),
-                        I18n.t("settings.badges_top_right"),
-                        I18n.t("settings.badges_bottom_left"),
-                        I18n.t("settings.badges_bottom_right"),
-                    ];
-                    current-index: root.badge-position == BadgePosition.top-left ? 1
-                        : root.badge-position == BadgePosition.top-right ? 2
-                        : root.badge-position == BadgePosition.bottom-left ? 3
-                        : root.badge-position == BadgePosition.bottom-right ? 4
-                        : 0;
-                    selected(index) => { root.badge-position-changed(root.badge-position-choices[index]); }
-                }
-            }
-
-            if root.launcher-screens == LauncherScreens.home-and-apps-menu && root.badge-position != BadgePosition.off: VerticalLayout {
-                spacing: Tokens.spacing-2xs;
+            // 1. Make Seelen the launcher and set the background.
+            SettingsSection {
+                title: I18n.t("settings.section_system");
 
                 SettingRow {
-                    label: I18n.t("settings.notification_access");
+                    label: I18n.t("settings.default_launcher");
 
                     Button {
-                        text: root.notification-access ? I18n.t("settings.change") : I18n.t("settings.allow");
-                        clicked => { root.open-notification-access(); }
+                        text: I18n.t("settings.change");
+                        clicked => { root.open-default-launcher-settings(); }
                     }
                 }
-
-                if !root.notification-access: Text {
-                    text: I18n.t("settings.notification_access_hint");
-                    font-size: 0.875rem;
-                    color: Tokens.slu-std-fg-secondary-color;
-                    wrap: word-wrap;
-                }
-            }
-
-            SectionTitle {
-                text: I18n.t("settings.section_system");
-            }
-
-            SettingRow {
-                label: I18n.t("settings.wallpaper");
-
-                Button {
-                    text: I18n.t("settings.change");
-                    clicked => { root.open-wallpaper-picker(); }
-                }
-            }
-
-            SettingRow {
-                label: I18n.t("settings.default_launcher");
-
-                Button {
-                    text: I18n.t("settings.change");
-                    clicked => { root.open-default-launcher-settings(); }
-                }
-            }
-
-            SectionTitle {
-                text: I18n.t("settings.section_about");
-            }
-
-            SettingRow {
-                label: I18n.t("settings.github");
-
-                Button {
-                    text: I18n.t("settings.open");
-                    icon: @image-url("../icons/IoLogoGithub.svg");
-                    clicked => { root.open-url("https://github.com/seelen-corp/slu-android"); }
-                }
-            }
-
-            SettingRow {
-                label: I18n.t("settings.website");
-
-                Button {
-                    text: I18n.t("settings.open");
-                    icon: @image-url("../icons/IoGlobeOutline.svg");
-                    clicked => { root.open-url("https://seelen.io"); }
-                }
-            }
-
-            SettingRow {
-                label: I18n.t("settings.discord");
-
-                Button {
-                    text: I18n.t("settings.open");
-                    icon: @image-url("../icons/IoLogoDiscord.svg");
-                    clicked => { root.open-url("https://discord.seelen.io"); }
-                }
-            }
-
-            VerticalLayout {
-                spacing: Tokens.spacing-2xs;
 
                 SettingRow {
-                    label: I18n.t("settings.support");
+                    label: I18n.t("settings.wallpaper");
 
                     Button {
-                        text: root.rewarded-state == RewardedState.loading
-                            ? I18n.t("settings.support_loading")
-                            : I18n.t("settings.support_watch_ad");
-                        icon: @image-url("../icons/IoHeartOutline.svg");
-                        enabled: root.rewarded-state != RewardedState.loading;
-                        clicked => { root.watch-rewarded-ad(); }
+                        text: I18n.t("settings.change");
+                        clicked => { root.open-wallpaper-picker(); }
                     }
-                }
-
-                Text {
-                    text: root.rewarded-state == RewardedState.thanks ? I18n.t("settings.support_thanks")
-                        : root.rewarded-state == RewardedState.failed ? I18n.t("settings.support_failed")
-                        : I18n.t("settings.support_hint");
-                    font-size: 0.875rem;
-                    color: Tokens.slu-std-fg-secondary-color;
-                    wrap: word-wrap;
                 }
             }
 
-            if root.ad-privacy-options: SettingRow {
-                label: I18n.t("settings.ad_privacy");
+            // 2. Which screens exist and how the apps are laid out.
+            SettingsSection {
+                title: I18n.t("settings.section_layout");
 
-                Button {
-                    text: I18n.t("settings.change");
-                    icon: @image-url("../icons/IoShieldCheckmarkOutline.svg");
-                    clicked => { root.open-ad-privacy-options(); }
+                SettingRow {
+                    label: I18n.t("settings.launcher_screens");
+
+                    // Same order as the `LauncherScreens` enum.
+                    Select {
+                        options: [
+                            I18n.t("settings.launcher_screens_apps_menu"),
+                            I18n.t("settings.launcher_screens_home_and_apps_menu"),
+                        ];
+                        current-index: root.launcher-screens == LauncherScreens.apps-menu ? 0 : 1;
+                        selected(index) => {
+                            root.launcher-screens-changed(index == 0 ? LauncherScreens.apps-menu : LauncherScreens.home-and-apps-menu);
+                        }
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.apps_view");
+
+                    // Same order as the `AppsView` enum.
+                    Select {
+                        options: [
+                            I18n.t("settings.apps_view_list"),
+                            I18n.t("settings.apps_view_text_list"),
+                            I18n.t("settings.apps_view_grid"),
+                        ];
+                        current-index: root.apps-view == AppsView.list ? 0 : root.apps-view == AppsView.text-list ? 1 : 2;
+                        selected(index) => {
+                            root.apps-view-changed(index == 0 ? AppsView.list : index == 1 ? AppsView.text-list : AppsView.grid);
+                        }
+                    }
+                }
+
+                // Grid view: Home and the Apps Menu.
+                if root.apps-view == AppsView.grid: SettingRow {
+                    label: I18n.t("settings.grid_columns");
+
+                    Select {
+                        options: ["3", "4", "5", "6"];
+                        current-index: Math.max(0, root.home-columns - 3);
+                        selected(index) => { root.grid-columns-changed(root.column-choices[index]); }
+                    }
+                }
+
+                // The Apps Menu (Home has its own order).
+                SettingRow {
+                    label: I18n.t("settings.group_by_letter");
+
+                    Switch {
+                        checked: root.group-apps-by-letter;
+                        toggled(checked) => { root.group-apps-by-letter-changed(checked); }
+                    }
+                }
+            }
+
+            // 3. Home behaviour (only when Home is enabled).
+            if root.has-home: SettingsSection {
+                title: I18n.t("settings.section_home");
+
+                SettingRow {
+                    label: I18n.t("settings.swipe_down");
+
+                    // Same order as the `SwipeDownAction` enum.
+                    Select {
+                        options: [
+                            I18n.t("settings.swipe_down_search"),
+                            I18n.t("settings.swipe_down_notifications"),
+                        ];
+                        current-index: root.swipe-down-action == SwipeDownAction.search ? 0 : 1;
+                        selected(index) => {
+                            root.swipe-down-action-changed(index == 0 ? SwipeDownAction.search : SwipeDownAction.notifications);
+                        }
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.add_new_apps_to_home");
+
+                    Switch {
+                        checked: root.add-new-apps-to-home;
+                        toggled(checked) => { root.add-new-apps-to-home-changed(checked); }
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.badges");
+
+                    // Same order as `badge-position-choices`.
+                    Select {
+                        options: [
+                            I18n.t("settings.badges_off"),
+                            I18n.t("settings.badges_top_left"),
+                            I18n.t("settings.badges_top_right"),
+                            I18n.t("settings.badges_bottom_left"),
+                            I18n.t("settings.badges_bottom_right"),
+                        ];
+                        current-index: root.badge-position == BadgePosition.top-left ? 1
+                            : root.badge-position == BadgePosition.top-right ? 2
+                            : root.badge-position == BadgePosition.bottom-left ? 3
+                            : root.badge-position == BadgePosition.bottom-right ? 4
+                            : 0;
+                        selected(index) => { root.badge-position-changed(root.badge-position-choices[index]); }
+                    }
+                }
+
+                if root.badge-position != BadgePosition.off: VerticalLayout {
+                    spacing: Tokens.spacing-2xs;
+
+                    SettingRow {
+                        label: I18n.t("settings.notification_access");
+
+                        Button {
+                            text: root.notification-access ? I18n.t("settings.change") : I18n.t("settings.allow");
+                            clicked => { root.open-notification-access(); }
+                        }
+                    }
+
+                    if !root.notification-access: SettingHint {
+                        text: I18n.t("settings.notification_access_hint");
+                    }
+                }
+            }
+
+            // 4. Fine-tune how each app looks: size and spacing, name, then icon.
+            SettingsSection {
+                title: I18n.t("settings.section_appearance");
+
+                SliderSetting {
+                    label: I18n.t("settings.item_size");
+                    unit: I18n.t("settings.unit_px");
+                    minimum: root.item-size-min;
+                    maximum: root.item-size-max;
+                    value: root.item-size;
+                    changed(value) => { root.item-size-changed(value); }
+                }
+
+                // Range of `APPS_PADDING_RANGE` (config.rs).
+                SliderSetting {
+                    label: I18n.t("settings.apps_padding");
+                    unit: I18n.t("settings.unit_px");
+                    minimum: 0;
+                    maximum: 60;
+                    value: root.apps-padding;
+                    changed(value) => { root.apps-padding-changed(value); }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.label_lines");
+
+                    // Index = lines - 1.
+                    Select {
+                        options: [
+                            I18n.t("settings.label_lines_one"),
+                            I18n.t("settings.label_lines_two"),
+                        ];
+                        current-index: root.label-lines - 1;
+                        selected(index) => {
+                            root.label-lines-changed(index + 1);
+                        }
+                    }
+                }
+
+                if root.has-icons: SettingRow {
+                    label: I18n.t("settings.icon_shape");
+
+                    // Same order as `icon-shape-choices`.
+                    Select {
+                        options: [
+                            I18n.t("settings.icon_shape_system"),
+                            I18n.t("settings.icon_shape_circle"),
+                            I18n.t("settings.icon_shape_squircle"),
+                            I18n.t("settings.icon_shape_teardrop"),
+                            I18n.t("settings.icon_shape_rounded_square"),
+                        ];
+                        current-index: root.icon-shape == IconShape.circle ? 1
+                            : root.icon-shape == IconShape.squircle ? 2
+                            : root.icon-shape == IconShape.teardrop ? 3
+                            : root.icon-shape == IconShape.rounded-square ? 4
+                            : 0;
+                        selected(index) => { root.icon-shape-changed(root.icon-shape-choices[index]); }
+                    }
+                }
+
+                if root.has-icons && root.icon-shape == IconShape.rounded-square: SliderSetting {
+                    label: I18n.t("settings.icon_corner_radius");
+                    unit: I18n.t("settings.unit_percent");
+                    minimum: 0;
+                    maximum: 50;
+                    value: root.icon-corner-radius;
+                    changed(value) => { root.icon-corner-radius-changed(value); }
+                }
+
+                if root.has-icons: SettingRow {
+                    label: I18n.t("settings.legacy_icons");
+
+                    // Same order as the `LegacyIcons` enum.
+                    Select {
+                        options: [
+                            I18n.t("settings.legacy_icons_wrap"),
+                            I18n.t("settings.legacy_icons_original"),
+                        ];
+                        current-index: root.legacy-icons == LegacyIcons.wrap ? 0 : 1;
+                        selected(index) => {
+                            root.legacy-icons-changed(index == 0 ? LegacyIcons.wrap : LegacyIcons.original);
+                        }
+                    }
+                }
+            }
+
+            // 5. Project info and support.
+            SettingsSection {
+                title: I18n.t("settings.section_about");
+
+                VerticalLayout {
+                    spacing: Tokens.spacing-2xs;
+
+                    SettingRow {
+                        label: I18n.t("settings.support");
+
+                        Button {
+                            text: root.rewarded-state == RewardedState.loading
+                                ? I18n.t("settings.support_loading")
+                                : I18n.t("settings.support_watch_ad");
+                            icon: @image-url("../icons/IoHeartOutline.svg");
+                            enabled: root.rewarded-state != RewardedState.loading;
+                            clicked => { root.watch-rewarded-ad(); }
+                        }
+                    }
+
+                    SettingHint {
+                        text: root.rewarded-state == RewardedState.thanks ? I18n.t("settings.support_thanks")
+                            : root.rewarded-state == RewardedState.failed ? I18n.t("settings.support_failed")
+                            : I18n.t("settings.support_hint");
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.github");
+
+                    Button {
+                        text: I18n.t("settings.open");
+                        icon: @image-url("../icons/IoLogoGithub.svg");
+                        clicked => { root.open-url("https://github.com/seelen-corp/slu-android"); }
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.website");
+
+                    Button {
+                        text: I18n.t("settings.open");
+                        icon: @image-url("../icons/IoGlobeOutline.svg");
+                        clicked => { root.open-url("https://seelen.io"); }
+                    }
+                }
+
+                SettingRow {
+                    label: I18n.t("settings.discord");
+
+                    Button {
+                        text: I18n.t("settings.open");
+                        icon: @image-url("../icons/IoLogoDiscord.svg");
+                        clicked => { root.open-url("https://discord.seelen.io"); }
+                    }
+                }
+
+                if root.ad-privacy-options: SettingRow {
+                    label: I18n.t("settings.ad_privacy");
+
+                    Button {
+                        text: I18n.t("settings.change");
+                        icon: @image-url("../icons/IoShieldCheckmarkOutline.svg");
+                        clicked => { root.open-ad-privacy-options(); }
+                    }
                 }
             }
         }

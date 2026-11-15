@@ -44,7 +44,8 @@ settings:
   add_new_apps_to_home: Add new apps to Home
   group_by_letter: Group apps by letter
   grid_columns: Grid columns
-  section_apps: Apps
+  section_home: Home
+  section_appearance: Appearance
   icon_shape: Icon shape
   icon_shape_system: System default
   icon_shape_circle: Circle
