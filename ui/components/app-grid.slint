@@ -29,12 +29,12 @@ export global GridMetrics {
     public pure function cell-height(icon-size: length, show-label: bool, label-height: length) -> length {
         return icon-size + 2 * GridMetrics.cell-padding + (show-label ? Tokens.spacing-2xs + label-height : 0);
     }
-    // Height of an `AppGrid` `width` wide: its rows, separated and surrounded by
-    // `AppsLayout.padding`.
-    public pure function grid-height(width: length, columns: int, count: int, label-height: length) -> length {
-        let cell = GridMetrics.cell-height(GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, width - 2 * AppsLayout.padding), columns)), true, label-height);
+    // Height of an `AppGrid` `width` wide: its rows, separated by
+    // `AppsLayout.padding` and surrounded by `edge`.
+    public pure function grid-height(width: length, columns: int, count: int, label-height: length, edge: length) -> length {
+        let cell = GridMetrics.cell-height(GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, width - 2 * edge), columns)), true, label-height);
         let rows = Math.ceil(count / Math.max(1, columns));
-        return 2 * AppsLayout.padding + rows * cell + Math.max(0, rows - 1) * AppsLayout.padding;
+        return 2 * edge + rows * cell + Math.max(0, rows - 1) * AppsLayout.padding;
     }
 }
 
@@ -121,6 +121,8 @@ export component AppGrid inherits Rectangle {
     in property <bool> in-folder: false;
     in property <bool> show-badges: false;
     in property <int> columns: 4;
+    // Space around the cells (between rows it's always `AppsLayout.padding`).
+    in property <length> edge: AppsLayout.padding;
     // Apps reordered by dragging them (long press, then move): `app-moved`.
     // The drag state is shared (two-way) with whoever draws the dragged icon.
     in property <bool> sortable: false;
@@ -136,7 +138,6 @@ export component AppGrid inherits Rectangle {
     // Dropped right before the app at `index` (the length: last).
     callback app-moved(app: AppItem, index: int);
 
-    property <length> edge: AppsLayout.padding;
     property <length> inner-width: Math.max(0, self.width - 2 * self.edge);
     property <length> cell-width: GridMetrics.column-width(self.inner-width, self.columns);
     property <length> icon-size: GridMetrics.icon-size(self.cell-width);
@@ -144,7 +145,7 @@ export component AppGrid inherits Rectangle {
     property <length> cell-height: GridMetrics.cell-height(self.icon-size, true, self.label-height);
     property <length> row-gap: AppsLayout.padding;
 
-    preferred-height: GridMetrics.grid-height(self.width, self.columns, self.apps.length, self.label-height);
+    preferred-height: GridMetrics.grid-height(self.width, self.columns, self.apps.length, self.label-height, self.edge);
 
     label-metrics := GridLabelMetrics { }
 

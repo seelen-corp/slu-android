@@ -1,0 +1,42 @@
+import { AppGroup, AppsView } from "../types.slint";
+import { AppListItem, ListMetrics } from "app-list-item.slint";
+import { AppGrid } from "app-grid.slint";
+import { WallpaperLabel } from "wallpaper-label.slint";
+
+// A group of the Apps Menu (Settings > Group by letter), over the wallpaper:
+// the letter as its title, then its apps in the view chosen in Settings. No
+// surface of its own: the groups are told apart by their title and spacing.
+export component AppGroupBox inherits VerticalLayout {
+    in property <AppGroup> group;
+    in property <AppsView> view: AppsView.list;
+    in property <bool> home-enabled: false;
+    // Grid view.
+    in property <int> columns: 4;
+
+    // Lined up with the icons/titles of the rows.
+    HorizontalLayout {
+        padding-left: ListMetrics.row-padding;
+        padding-right: ListMetrics.row-padding;
+
+        WallpaperLabel {
+            text: root.group.letter;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+    }
+
+    if root.view != AppsView.grid: VerticalLayout {
+        for app in root.group.apps: AppListItem {
+            app: app;
+            show-icon: root.view == AppsView.list;
+            home-enabled: root.home-enabled;
+        }
+    }
+
+    if root.view == AppsView.grid: AppGrid {
+        apps: root.group.apps;
+        columns: root.columns;
+        home-enabled: root.home-enabled;
+        edge: 0;
+    }
+}

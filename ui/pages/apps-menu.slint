@@ -1,7 +1,7 @@
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
 import { AppActions, Interaction, LauncherActions } from "../app-actions.slint";
-import { AppItem, AppsView } from "../types.slint";
+import { AppGroup, AppItem, AppsView } from "../types.slint";
 import { AppCollection } from "../components/app-collection.slint";
 import { TopSwipeArea } from "../components/top-swipe-area.slint";
 import { Button, ButtonSkin } from "../components/button.slint";
@@ -12,6 +12,8 @@ import { WallpaperLabel } from "../components/wallpaper-label.slint";
 // the wallpaper.
 export component AppsMenuPage inherits Rectangle {
     in property <[AppItem]> apps: [];
+    // The same apps grouped by letter; empty: a single list.
+    in property <[AppGroup]> groups: [];
     in property <AppsView> view: AppsView.list;
     // Grid view.
     in property <int> columns: 4;
@@ -107,6 +109,7 @@ export component AppsMenuPage inherits Rectangle {
 
             collection := AppCollection {
                 apps: root.apps;
+                groups: root.groups;
                 view: root.view;
                 columns: root.columns;
                 home-enabled: root.home-enabled;

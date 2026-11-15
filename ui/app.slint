@@ -4,14 +4,14 @@ import { ConfigPage } from "pages/config.slint";
 import { FolderPage } from "pages/folder.slint";
 import { WidgetPickerPage } from "pages/widget-picker.slint";
 import { Tokens } from "tokens.slint";
-import { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState } from "types.slint";
+import { AppItem, AppGroup, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState } from "types.slint";
 import { HomeActions, Interaction, LauncherActions } from "app-actions.slint";
 
 export { I18n } from "i18n.slint";
 export { AppActions, HomeActions, LauncherActions } from "app-actions.slint";
 export { Tokens }
 export { AppsLayout } from "apps-layout.slint";
-export { AppItem, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState }
+export { AppItem, AppGroup, FolderItem, HomeItem, PictureItem, WidgetProviderItem, LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, BadgePosition, RewardedState }
 
 export component MainWindow inherits Window {
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
@@ -19,6 +19,9 @@ export component MainWindow inherits Window {
     in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
     // Launchable apps shown in the Apps Menu (filtered by its search).
     in property <[AppItem]> apps: [];
+    // The same apps grouped by letter (Settings > Group by letter, not
+    // searching); empty: shown as a single list.
+    in property <[AppGroup]> app-groups: [];
     // Home, grid view: apps in the pages and in the dock, pictures in the pages.
     in property <[HomeItem]> home-items: [];
     in property <[HomeItem]> home-pictures: [];
@@ -168,6 +171,7 @@ export component MainWindow inherits Window {
 
         if !root.home-enabled || root.apps-menu-open: menu := AppsMenuPage {
             apps: root.apps;
+            groups: root.app-groups;
             view: root.apps-view;
             columns: root.home-columns;
             home-enabled: root.home-enabled;
@@ -206,6 +210,7 @@ export component SettingsWindow inherits Window {
     in property <BadgePosition> badge-position: BadgePosition.top-right;
     in property <bool> notification-access: false;
     in property <bool> add-new-apps-to-home: true;
+    in property <bool> group-apps-by-letter: true;
     // Height of the ad banner above the bottom system bar (`Ads.java`, drawn
     // by Android over this window); 0 without banner.
     in property <length> ad-banner-height: 0px;
@@ -225,6 +230,7 @@ export component SettingsWindow inherits Window {
     callback label-lines-changed(value: int);
     callback badge-position-changed(value: BadgePosition);
     callback add-new-apps-to-home-changed(value: bool);
+    callback group-apps-by-letter-changed(value: bool);
     callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
@@ -255,6 +261,8 @@ export component SettingsWindow inherits Window {
         notification-access: root.notification-access;
         add-new-apps-to-home: root.add-new-apps-to-home;
         add-new-apps-to-home-changed(value) => { root.add-new-apps-to-home-changed(value); }
+        group-apps-by-letter: root.group-apps-by-letter;
+        group-apps-by-letter-changed(value) => { root.group-apps-by-letter-changed(value); }
         launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
         apps-view-changed(value) => { root.apps-view-changed(value); }
         swipe-down-action-changed(value) => { root.swipe-down-action-changed(value); }

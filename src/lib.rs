@@ -500,7 +500,53 @@ fn apply_search(window: &MainWindow) {
         starts.extend(contains);
         starts
     });
+    // Grouped by letter only without search: the results keep their relevance
+    // order.
+    let grouped = query.is_empty() && SHOWN_CONFIG.with_borrow(|config| config.group_apps_by_letter);
+    let (items, groups) = if grouped {
+        let groups = group_by_letter(items);
+        let items = groups.iter().flat_map(|group| group.apps.iter()).collect();
+        (items, groups)
+    } else {
+        (items, Vec::new())
+    };
     window.set_apps(ModelRc::new(VecModel::from(items)));
+    window.set_app_groups(ModelRc::new(VecModel::from(groups)));
+}
+
+/// Group of an app title in the Apps Menu: its first letter, uppercase and
+/// without accents ("Ábaco" → "A"), or "#" if it doesn't start with a letter.
+fn letter_of(title: &str) -> String {
+    match fold(title.trim_start()).chars().next() {
+        Some(c) if c.is_alphabetic() => c.to_uppercase().collect(),
+        _ => "#".to_owned(),
+    }
+}
+
+/// Apps grouped by `letter_of` their title: "#" first, then the letters in
+/// order; the apps of each group sorted by title.
+fn group_by_letter(apps: Vec<AppItem>) -> Vec<AppGroup> {
+    let mut keyed: Vec<(String, String, AppItem)> = apps
+        .into_iter()
+        .map(|app| (letter_of(&app.title), fold(&app.title), app))
+        .collect();
+    keyed.sort_by(|(a, a_title, _), (b, b_title, _)| {
+        (a != "#", a, a_title).cmp(&(b != "#", b, b_title))
+    });
+    let mut groups: Vec<(String, Vec<AppItem>)> = Vec::new();
+    for (letter, _, app) in keyed {
+        match groups.last_mut() {
+            Some((last, apps)) if *last == letter => apps.push(app),
+            _ => groups.push((letter, vec![app])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(letter, apps)| AppGroup {
+            letter: letter.into(),
+            apps: ModelRc::new(VecModel::from(apps)),
+        })
+        .collect()
 }
 
 /// System accent → `Tokens.system-accent-*`.
@@ -849,6 +895,7 @@ fn show_settings(window: &SettingsWindow, config: &config::Config) {
     window.set_label_lines(config.label_lines as i32);
     window.set_badge_position(config.badge_position.into());
     window.set_add_new_apps_to_home(config.add_new_apps_to_home);
+    window.set_group_apps_by_letter(config.group_apps_by_letter);
 }
 
 /// Whether the launcher may read notifications, in the Settings window (it's
@@ -924,6 +971,12 @@ fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     window.on_add_new_apps_to_home_changed(move |value| {
         save_setting(&weak, "save add new apps to home", |config| {
             config.add_new_apps_to_home = value
+        });
+    });
+    let weak = window.as_weak();
+    window.on_group_apps_by_letter_changed(move |value| {
+        save_setting(&weak, "save group apps by letter", |config| {
+            config.group_apps_by_letter = value
         });
     });
     let weak = window.as_weak();

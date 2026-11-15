@@ -44,6 +44,9 @@ settings:
   add_new_apps_to_home: Add new apps to Home
   add_new_apps_to_home_on: "On"
   add_new_apps_to_home_off: "Off"
+  group_by_letter: Group apps by letter
+  group_by_letter_on: "On"
+  group_by_letter_off: "Off"
   grid_columns: Grid columns
   section_apps: Apps
   icon_shape: Icon shape

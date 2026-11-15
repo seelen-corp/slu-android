@@ -512,6 +512,9 @@ pub struct Config {
     pub badge_position: BadgePosition,
     /// Apps installed while Home is in use are put on it.
     pub add_new_apps_to_home: bool,
+    /// The Apps Menu shows its apps grouped by their first letter (while not
+    /// searching).
+    pub group_apps_by_letter: bool,
     /// Apps on Home. Entries of apps that are not installed are kept (they come
     /// back if the app is reinstalled, or mid-update when it's briefly gone),
     /// until the user edits Home.
@@ -536,6 +539,7 @@ impl Default for Config {
             label_lines: DEFAULT_LABEL_LINES,
             badge_position: BadgePosition::default(),
             add_new_apps_to_home: true,
+            group_apps_by_letter: true,
             home: Vec::new(),
         }
     }
@@ -1384,6 +1388,11 @@ impl Config {
                         config.add_new_apps_to_home = add;
                     }
                 }
+                "group_apps_by_letter" => {
+                    if let Ok(group) = value.parse() {
+                        config.group_apps_by_letter = group;
+                    }
+                }
                 "home" => {
                     if let Some(entry) = parse_home_entry(value) {
                         config.home.push(entry);
@@ -1451,7 +1460,7 @@ impl Config {
 
     fn serialize(&self) -> String {
         let mut text = format!(
-            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\nadd_new_apps_to_home={}\n",
+            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\nadd_new_apps_to_home={}\ngroup_apps_by_letter={}\n",
             self.launcher_screens.as_str(),
             self.apps_view.as_str(),
             self.swipe_down.as_str(),
@@ -1467,6 +1476,7 @@ impl Config {
             self.label_lines,
             self.badge_position.as_str(),
             self.add_new_apps_to_home,
+            self.group_apps_by_letter,
         );
         for entry in &self.home {
             let slot = entry.slot.serialize();
@@ -1695,6 +1705,7 @@ mod tests {
         config.label_lines = 2;
         config.badge_position = BadgePosition::BottomLeft;
         config.add_new_apps_to_home = false;
+        config.group_apps_by_letter = false;
         assert_eq!(Config::parse(&config.serialize()), config);
     }
 

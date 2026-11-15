@@ -93,6 +93,8 @@ export component ConfigPage inherits Rectangle {
     in property <bool> notification-access: false;
     // Apps installed while Home is in use are put on it.
     in property <bool> add-new-apps-to-home: true;
+    // The Apps Menu groups its apps by their first letter.
+    in property <bool> group-apps-by-letter: true;
     // Settings > Support the project (`Ads.java`).
     in property <RewardedState> rewarded-state: RewardedState.idle;
     // The ads consent form must be reachable again (GDPR).
@@ -110,6 +112,7 @@ export component ConfigPage inherits Rectangle {
     callback label-lines-changed(value: int);
     callback badge-position-changed(value: BadgePosition);
     callback add-new-apps-to-home-changed(value: bool);
+    callback group-apps-by-letter-changed(value: bool);
     callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
@@ -193,6 +196,20 @@ export component ConfigPage inherits Rectangle {
                     selected(index) => {
                         root.apps-view-changed(index == 0 ? AppsView.list : index == 1 ? AppsView.text-list : AppsView.grid);
                     }
+                }
+            }
+
+            // The Apps Menu (Home has its own order).
+            SettingRow {
+                label: I18n.t("settings.group_by_letter");
+
+                Select {
+                    options: [
+                        I18n.t("settings.group_by_letter_on"),
+                        I18n.t("settings.group_by_letter_off"),
+                    ];
+                    current-index: root.group-apps-by-letter ? 0 : 1;
+                    selected(index) => { root.group-apps-by-letter-changed(index == 0); }
                 }
             }
 

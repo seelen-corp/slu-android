@@ -14,6 +14,13 @@ export struct AppItem {
     notifications: int,
 }
 
+// Apps Menu, Settings > Group by letter: the apps whose title starts with
+// `letter` ("#": not a letter), in order.
+export struct AppGroup {
+    letter: string,
+    apps: [AppItem],
+}
+
 // Several apps in one slot of Home (`config::Folder`).
 export struct FolderItem {
     id: int,
