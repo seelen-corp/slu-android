@@ -5,6 +5,7 @@ import { LauncherScreens, AppsView, SwipeDownAction, IconShape, LegacyIcons, Bad
 import { Button, ButtonSkin } from "../components/button.slint";
 import { Select } from "../components/select.slint";
 import { Slider } from "../components/slider.slint";
+import { Switch } from "../components/switch.slint";
 
 // A setting: label on the left, its control (the child) on the right.
 component SettingRow inherits HorizontalLayout {
@@ -203,13 +204,9 @@ export component ConfigPage inherits Rectangle {
             SettingRow {
                 label: I18n.t("settings.group_by_letter");
 
-                Select {
-                    options: [
-                        I18n.t("settings.group_by_letter_on"),
-                        I18n.t("settings.group_by_letter_off"),
-                    ];
-                    current-index: root.group-apps-by-letter ? 0 : 1;
-                    selected(index) => { root.group-apps-by-letter-changed(index == 0); }
+                Switch {
+                    checked: root.group-apps-by-letter;
+                    toggled(checked) => { root.group-apps-by-letter-changed(checked); }
                 }
             }
 
@@ -234,13 +231,9 @@ export component ConfigPage inherits Rectangle {
             if root.launcher-screens == LauncherScreens.home-and-apps-menu: SettingRow {
                 label: I18n.t("settings.add_new_apps_to_home");
 
-                Select {
-                    options: [
-                        I18n.t("settings.add_new_apps_to_home_on"),
-                        I18n.t("settings.add_new_apps_to_home_off"),
-                    ];
-                    current-index: root.add-new-apps-to-home ? 0 : 1;
-                    selected(index) => { root.add-new-apps-to-home-changed(index == 0); }
+                Switch {
+                    checked: root.add-new-apps-to-home;
+                    toggled(checked) => { root.add-new-apps-to-home-changed(checked); }
                 }
             }
 

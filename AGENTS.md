@@ -64,9 +64,11 @@ Where things live:
   `slu-std-*`, `system-accent-*`, shadows). The accent is read from Android
   (`system-modules/theme.rs`, Material You tones on 12+) and set from Rust.
 - Standard components: `ui/components/` (`button`, `text-field`, `select`,
-  `menu` = popover surface + items, `wallpaper-label`, `badge` = notification
-  badge, `icon`). App entries share their touch behaviour through
-  `app-item-base.slint`.
+  `switch`, `slider`, `menu` = popover surface + items, `wallpaper-label`,
+  `badge` = notification badge, `icon`). App entries share their touch behaviour
+  through `app-item-base.slint`.
+- Boolean settings **always** use `Switch`, never a `Select` with On/Off
+  options.
 - Icons: monochrome SVGs in `ui/icons/`, copied from the desktop's
   `../Seelen-UI/dist/icons` (react-icons names; prefer the `Io*` Ionicons
   outline set). Copy only the ones used. Draw them with `Icon` (tinted with a fg

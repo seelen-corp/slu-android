@@ -1,0 +1,55 @@
+import { Tokens } from "../tokens.slint";
+
+// Standard switch (`input[type="checkbox"][data-skin="switch"]`): a pill track,
+// accent when on, with a round knob on the side of the value. Every boolean
+// setting uses it. The touch area is taller than the track (touch target).
+export component Switch inherits Rectangle {
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+
+    // Tapped: the new value (`checked` follows it once saved).
+    callback toggled(checked: bool);
+
+    property <length> track-width: 36px;
+    property <length> track-height: 18px;
+    property <length> knob-inset: 2px;
+
+    min-width: root.track-width;
+    min-height: 44px;
+    horizontal-stretch: 0;
+    opacity: root.enabled ? 1 : 0.5;
+
+    accessible-role: switch;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.toggled(!root.checked); }
+
+    track := Rectangle {
+        x: root.width - self.width;
+        y: (root.height - self.height) / 2;
+        width: root.track-width;
+        height: root.track-height;
+        border-radius: Tokens.radius-full;
+        // Pressed: the hover color of the desktop (touch has no hover).
+        background: root.checked
+            ? (touch.pressed ? Tokens.slu-std-ui-hover-color : Tokens.slu-std-ui-color)
+            : (touch.pressed ? Tokens.color-gray-500 : Tokens.color-gray-400);
+
+        Rectangle {
+            x: root.checked ? parent.width - self.width - root.knob-inset : root.knob-inset;
+            y: root.knob-inset;
+            width: parent.height - 2 * root.knob-inset;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: Tokens.slu-std-ui-fg-color;
+
+            // Control state change.
+            animate x { duration: 150ms; easing: ease; }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.toggled(!root.checked); }
+    }
+}
