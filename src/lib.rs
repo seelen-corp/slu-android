@@ -225,7 +225,14 @@ fn apply_widget_frame(window: &MainWindow, id: u32) {
     let frame = match widgets::take_frame(id) {
         Some(buffer) => slint::Image::from_rgba8_premultiplied(buffer),
         None => match widget_gpu::take(id) {
-            Some(frame) => frame,
+            Some(frame) => {
+                // Its buffer goes back to Java only after a frame is rendered
+                // (`widget_gpu::after_rendering`). Setting the image doesn't
+                // always ask for one (e.g. the widget isn't on screen), and with
+                // every buffer held Java stops drawing the widget.
+                window.window().request_redraw();
+                frame
+            }
             None => return,
         },
     };
@@ -1136,18 +1143,18 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
             }
             slint::RenderingState::RenderingTeardown => {
                 widget_gpu::teardown();
-                // Their textures are gone: no frame until they're drawn again.
-                weak.upgrade_in_event_loop(|window| {
-                    let ids: Vec<u32> =
-                        WIDGET_FRAMES.with_borrow(|frames| frames.keys().copied().collect());
+                // Their textures are gone: no frame until they're drawn again
+                // (`RenderingSetup` asks for them). Done right here, not queued:
+                // Slint sets up the new context and renders before queued work
+                // runs, so it would drop the new frames instead.
+                let ids: Vec<u32> =
+                    WIDGET_FRAMES.with_borrow(|frames| frames.keys().copied().collect());
+                if let Some(window) = weak.upgrade() {
                     for id in ids {
                         set_widget_frame(&window, id, slint::Image::default());
                     }
-                    WIDGET_FRAMES.with_borrow_mut(|frames| frames.clear());
-                    // Frames shown before this ran were just dropped too.
-                    log_error("redraw widgets", widgets::redraw());
-                })
-                .ok();
+                }
+                WIDGET_FRAMES.with_borrow_mut(|frames| frames.clear());
             }
             _ => {}
         });
