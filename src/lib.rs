@@ -802,6 +802,28 @@ fn apply_badges(window: &MainWindow) {
     update_apps(&window.get_open_folder().apps);
 }
 
+/// A package was just installed: puts its launcher entries on Home, if the
+/// user wants it (`Config::add_new_app`). The caller refreshes the window.
+fn add_new_app_to_home(package: &str) -> Result<()> {
+    if !config::load()?.adds_new_apps() {
+        return Ok(());
+    }
+    let new_apps: Vec<AppRef> = apps::get_installed_apps()?
+        .into_iter()
+        .filter(|app| app.package_name == package)
+        .map(|app| AppRef::new(&app.package_name, &app.activity_name))
+        .collect();
+    if new_apps.is_empty() {
+        return Ok(());
+    }
+    config::update(|config| {
+        for app in new_apps {
+            config.add_new_app(app);
+        }
+    })?;
+    Ok(())
+}
+
 /// Applies a Home edit to the config and shows the result.
 fn edit_home(
     weak: &slint::Weak<MainWindow>,
@@ -826,6 +848,7 @@ fn show_settings(window: &SettingsWindow, config: &config::Config) {
     window.set_apps_padding(config.apps_padding as i32);
     window.set_label_lines(config.label_lines as i32);
     window.set_badge_position(config.badge_position.into());
+    window.set_add_new_apps_to_home(config.add_new_apps_to_home);
 }
 
 /// Whether the launcher may read notifications, in the Settings window (it's
@@ -895,6 +918,12 @@ fn run_settings(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     window.on_apps_view_changed(move |value| {
         save_setting(&weak, "save apps view", |config| {
             config.apps_view = value.into()
+        });
+    });
+    let weak = window.as_weak();
+    window.on_add_new_apps_to_home_changed(move |value| {
+        save_setting(&weak, "save add new apps to home", |config| {
+            config.add_new_apps_to_home = value
         });
     });
     let weak = window.as_weak();
@@ -1316,8 +1345,15 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     });
 
     let weak = window.as_weak();
-    apps::subscribe(move || {
-        weak.upgrade_in_event_loop(|window| {
+    apps::subscribe(move |change| {
+        let installed = match change {
+            apps::PackageChange::Installed(package) => Some(package.clone()),
+            apps::PackageChange::Other => None,
+        };
+        weak.upgrade_in_event_loop(move |window| {
+            if let Some(package) = installed {
+                log_error("add new app to home", add_new_app_to_home(&package));
+            }
             ICONS.with_borrow_mut(|icons| icons.clear());
             log_error("refresh apps", refresh(&window));
         })

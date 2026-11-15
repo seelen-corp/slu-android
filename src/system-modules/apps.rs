@@ -39,7 +39,16 @@ const FLAG_ACTIVITY_RESET_TASK_IF_NEEDED: i32 = 0x00200000;
 pub type SubscriptionId = u64;
 
 static NEXT_SUBSCRIPTION_ID: AtomicU64 = AtomicU64::new(1);
-type Subscriber = (SubscriptionId, Box<dyn Fn() + Send + 'static>);
+type Subscriber = (SubscriptionId, Box<dyn Fn(&PackageChange) + Send + 'static>);
+
+/// A change of the installed-apps set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageChange {
+    /// A package was just installed (not an update of an installed one).
+    Installed(String),
+    /// Anything else: uninstall, update, enable/disable...
+    Other,
+}
 
 static SUBSCRIBERS: Mutex<Vec<Subscriber>> = Mutex::new(Vec::new());
 
@@ -164,12 +173,12 @@ fn start_activity(env: &mut JNIEnv, activity: &JObject, intent: &JObject) -> Res
 }
 
 /// Registers a callback invoked whenever the installed-apps set changes
-/// (install, uninstall, or update). The callback runs on the JNI/broadcast
-/// thread, not the UI thread — dispatch UI updates yourself, e.g. via
-/// `slint::invoke_from_event_loop`.
+/// (install, uninstall, or update), with what changed. The callback runs on
+/// the JNI/broadcast thread, not the UI thread — dispatch UI updates
+/// yourself, e.g. via `slint::invoke_from_event_loop`.
 pub fn subscribe<F>(callback: F) -> SubscriptionId
 where
-    F: Fn() + Send + 'static,
+    F: Fn(&PackageChange) + Send + 'static,
 {
     let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
     SUBSCRIBERS.lock().unwrap().push((id, Box::new(callback)));
@@ -184,9 +193,9 @@ pub fn unsubscribe(id: SubscriptionId) {
         .retain(|(sub_id, _)| *sub_id != id);
 }
 
-fn notify_subscribers() {
+fn notify_subscribers(change: &PackageChange) {
     for (_, callback) in SUBSCRIBERS.lock().unwrap().iter() {
-        callback();
+        callback(change);
     }
 }
 
@@ -351,11 +360,24 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
 }
 
 /// Called from `PackageChangeReceiver.onReceive` via JNI whenever a package
-/// is added, removed, or replaced.
+/// is added, removed, or replaced. `installed_package` is the package just
+/// installed (not updated), or null.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_seelen_slu_1launcher_PackageChangeReceiver_nativeOnPackageChanged(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
+    installed_package: JString,
 ) {
-    notify_subscribers();
+    let change = if installed_package.is_null() {
+        PackageChange::Other
+    } else {
+        match env.get_string(&installed_package) {
+            Ok(package) => PackageChange::Installed(package.into()),
+            Err(err) => {
+                log::error!("failed to read the installed package: {err}");
+                PackageChange::Other
+            }
+        }
+    };
+    notify_subscribers(&change);
 }

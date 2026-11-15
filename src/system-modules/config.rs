@@ -510,6 +510,8 @@ pub struct Config {
     pub label_lines: u32,
     /// Notification badges of the apps on Home.
     pub badge_position: BadgePosition,
+    /// Apps installed while Home is in use are put on it.
+    pub add_new_apps_to_home: bool,
     /// Apps on Home. Entries of apps that are not installed are kept (they come
     /// back if the app is reinstalled, or mid-update when it's briefly gone),
     /// until the user edits Home.
@@ -533,6 +535,7 @@ impl Default for Config {
             apps_padding: DEFAULT_APPS_PADDING,
             label_lines: DEFAULT_LABEL_LINES,
             badge_position: BadgePosition::default(),
+            add_new_apps_to_home: true,
             home: Vec::new(),
         }
     }
@@ -689,6 +692,24 @@ impl Config {
             self.push_relocated(HomeContent::App(app), 0);
         }
         self.compact_pages();
+    }
+
+    /// Apps just installed go to Home: it's in use and the user wants it.
+    pub fn adds_new_apps(&self) -> bool {
+        self.add_new_apps_to_home && self.launcher_screens == LauncherScreens::HomeAndAppsMenu
+    }
+
+    /// An app was just installed: puts it in the first free grid cell, from the
+    /// first page (`relocate`), if `adds_new_apps`. Unlike a user's edit, it
+    /// keeps the entries of apps that are not installed (e.g. another app
+    /// mid-update). Returns whether it was added.
+    pub fn add_new_app(&mut self, app: AppRef) -> bool {
+        if !self.adds_new_apps() || self.is_on_home(&app) {
+            return false;
+        }
+        self.push_relocated(HomeContent::App(app), 0);
+        self.compact_pages();
+        true
     }
 
     /// Removes an app from Home, also from the folder it's in.
@@ -1358,6 +1379,11 @@ impl Config {
                         config.badge_position = position;
                     }
                 }
+                "add_new_apps_to_home" => {
+                    if let Ok(add) = value.parse() {
+                        config.add_new_apps_to_home = add;
+                    }
+                }
                 "home" => {
                     if let Some(entry) = parse_home_entry(value) {
                         config.home.push(entry);
@@ -1425,7 +1451,7 @@ impl Config {
 
     fn serialize(&self) -> String {
         let mut text = format!(
-            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\n",
+            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\nadd_new_apps_to_home={}\n",
             self.launcher_screens.as_str(),
             self.apps_view.as_str(),
             self.swipe_down.as_str(),
@@ -1440,6 +1466,7 @@ impl Config {
             self.apps_padding,
             self.label_lines,
             self.badge_position.as_str(),
+            self.add_new_apps_to_home,
         );
         for entry in &self.home {
             let slot = entry.slot.serialize();
@@ -1667,7 +1694,32 @@ mod tests {
         config.apps_padding = 60;
         config.label_lines = 2;
         config.badge_position = BadgePosition::BottomLeft;
+        config.add_new_apps_to_home = false;
         assert_eq!(Config::parse(&config.serialize()), config);
+    }
+
+    #[test]
+    fn new_apps_go_to_home() {
+        let mut config = Config {
+            launcher_screens: LauncherScreens::HomeAndAppsMenu,
+            ..Config::default()
+        };
+        config.add_to_home(app(1), all);
+        assert!(config.add_new_app(app(2)));
+        assert_eq!(config.home[1].slot, cell(0, 0, 1));
+        // Already on Home.
+        assert!(!config.add_new_app(app(2)));
+        assert_eq!(config.home.len(), 2);
+    }
+
+    #[test]
+    fn new_apps_off_or_without_home() {
+        let mut config = Config::default();
+        assert!(!config.add_new_app(app(1)));
+        config.launcher_screens = LauncherScreens::HomeAndAppsMenu;
+        config.add_new_apps_to_home = false;
+        assert!(!config.add_new_app(app(1)));
+        assert!(config.home.is_empty());
     }
 
     #[test]

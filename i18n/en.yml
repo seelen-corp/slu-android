@@ -41,6 +41,9 @@ settings:
   swipe_down: Swipe down on Home
   swipe_down_search: Search apps
   swipe_down_notifications: Notifications
+  add_new_apps_to_home: Add new apps to Home
+  add_new_apps_to_home_on: "On"
+  add_new_apps_to_home_off: "Off"
   grid_columns: Grid columns
   section_apps: Apps
   icon_shape: Icon shape

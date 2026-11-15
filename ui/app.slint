@@ -205,6 +205,7 @@ export component SettingsWindow inherits Window {
     in property <int> label-lines: 1;
     in property <BadgePosition> badge-position: BadgePosition.top-right;
     in property <bool> notification-access: false;
+    in property <bool> add-new-apps-to-home: true;
     // Height of the ad banner above the bottom system bar (`Ads.java`, drawn
     // by Android over this window); 0 without banner.
     in property <length> ad-banner-height: 0px;
@@ -223,6 +224,7 @@ export component SettingsWindow inherits Window {
     callback apps-padding-changed(value: int);
     callback label-lines-changed(value: int);
     callback badge-position-changed(value: BadgePosition);
+    callback add-new-apps-to-home-changed(value: bool);
     callback open-notification-access();
     callback open-wallpaper-picker();
     callback open-default-launcher-settings();
@@ -251,6 +253,8 @@ export component SettingsWindow inherits Window {
         label-lines: root.label-lines;
         badge-position: root.badge-position;
         notification-access: root.notification-access;
+        add-new-apps-to-home: root.add-new-apps-to-home;
+        add-new-apps-to-home-changed(value) => { root.add-new-apps-to-home-changed(value); }
         launcher-screens-changed(value) => { root.launcher-screens-changed(value); }
         apps-view-changed(value) => { root.apps-view-changed(value); }
         swipe-down-action-changed(value) => { root.swipe-down-action-changed(value); }
