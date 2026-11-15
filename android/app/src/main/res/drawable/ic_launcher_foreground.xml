@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Seelen UI logo (icon_v2.svg): the dashed lines. Foreground and themed icon
+     layer. 108dp canvas, viewport 384: the logo's 256 units sit at 64..320. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp"
+  android:height="108dp"
+  android:viewportWidth="384"
+  android:viewportHeight="384">
+  <path
+    android:fillColor="#FFFAFAFA"
+    android:pathData="M186.88,0H197.12V91.904H186.88ZM186.88,102.016H197.12V129.92H186.88ZM186.88,140.032H197.12V167.936H186.88ZM186.88,178.048H197.12V205.952H186.88ZM186.88,216.064H197.12V243.968H186.88ZM186.88,254.08H197.12V281.984H186.88ZM186.88,292.096H197.12V384H186.88ZM192,186.88H216.32V197.12H192ZM226.56,186.88H250.88V197.12H226.56ZM261.12,186.88H285.44V197.12H261.12ZM295.68,186.88H384V197.12H295.68Z" />
+</vector>
