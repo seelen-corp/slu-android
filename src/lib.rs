@@ -502,7 +502,8 @@ fn apply_search(window: &MainWindow) {
     });
     // Grouped by letter only without search: the results keep their relevance
     // order.
-    let grouped = query.is_empty() && SHOWN_CONFIG.with_borrow(|config| config.group_apps_by_letter);
+    let grouped =
+        query.is_empty() && SHOWN_CONFIG.with_borrow(|config| config.group_apps_by_letter);
     let (items, groups) = if grouped {
         let groups = group_by_letter(items);
         let items = groups.iter().flat_map(|group| group.apps.iter()).collect();
