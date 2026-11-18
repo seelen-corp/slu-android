@@ -498,7 +498,8 @@ pub struct Config {
     /// Grid columns, on Home (cells per page, slots of the dock) and in the Apps
     /// Menu.
     pub home_columns: u32,
-    /// Home grid rows: as many as fit on screen (portrait), reported by the UI.
+    /// Home grid rows: as many as fit on screen in portrait (landscape keeps
+    /// them and shrinks the icons), reported by the UI.
     pub home_rows: u32,
     /// Item size of each view (see `AppsView::item_size_range`).
     pub item_size_grid: u32,

@@ -129,27 +129,64 @@ component HomeGrid inherits HomeLayoutBase {
     in property <[int]> home-cells: [];
     in property <[bool]> dock-cells: [];
 
-    // The rows that fit changed; Rust saves them and moves the apps that no
-    // longer fit. Home is always portrait (manifest), so rotating doesn't change them.
+    // The rows that fit at the full icon size (see `report-rows`); Rust saves
+    // them and moves the apps that no longer fit.
     callback rows-fit(rows: int);
+    // Icon size of the grid and dock cells (the dragged icon is drawn with it).
+    callback icon-size-changed(size: length);
+
+    // Any orientation, same cells: the grid always has the saved rows
+    // (`home-rows`), so rotating never moves an app. Wider than tall, the dock
+    // goes to the right side (one column, its slots spread along it) so the
+    // pages keep the height.
+    property <bool> landscape: root.width > root.height;
 
     // Cells a column wide and as tall as the icon (`AppsLayout.item-size`) plus
-    // its label; as many rows as fit, the space left spread between them. The
+    // its label, the space left spread between the rows. If the saved rows don't
+    // fit at that size (e.g. landscape), the icons shrink until they do. The
     // dock uses the same columns and icon size, without labels.
     property <length> edge: AppsLayout.padding;
-    property <length> inner-width: Math.max(0, root.width - 2 * root.edge);
+    property <length> inner-width: Math.max(0, pages-area.width - 2 * root.edge);
     property <length> inner-height: Math.max(0, pages-area.height - 2 * root.edge);
     property <length> cell-width: GridMetrics.column-width(root.inner-width, root.columns);
-    property <length> icon-size: GridMetrics.icon-size(root.cell-width);
     property <length> label-height: AppsLayout.label-lines * label-metrics.preferred-height;
+    // At the full icon size: the rows that fit (reported to Rust).
+    property <length> full-icon-size: GridMetrics.icon-size(root.cell-width);
+    property <length> full-cell-height: GridMetrics.cell-height(root.full-icon-size, true, root.label-height);
+    property <int> fit-rows: Math.max(1, Math.floor(root.inner-height / Math.max(1px, root.full-cell-height)));
+    property <int> row-count: Math.max(1, root.home-rows);
+    property <length> icon-size: Math.max(GridMetrics.min-icon-size, Math.min(root.full-icon-size,
+        root.inner-height / root.row-count - (root.full-cell-height - root.full-icon-size)));
     property <length> cell-height: GridMetrics.cell-height(root.icon-size, true, root.label-height);
-    property <length> dock-cell-height: GridMetrics.cell-height(root.icon-size, false, 0);
-    property <int> row-count: Math.max(1, Math.floor(root.inner-height / Math.max(1px, root.cell-height)));
     property <length> row-gap: root.row-count > 1 ? Math.max(0, (root.inner-height - root.row-count * root.cell-height) / (root.row-count - 1)) : 0;
     // Origin of the first cell, in window coordinates.
     property <length> pages-x: pages-area.absolute-position.x + root.edge;
     property <length> pages-y: pages-area.absolute-position.y + root.edge;
-    property <bool> over-dock: root.dragging && root.drag-y >= dock-area.absolute-position.y;
+
+    // Dock: `columns` slots along its length (the width, or the height when
+    // `landscape`), as thick as an icon cell without label (see
+    // `dock-area-thickness`).
+    property <length> dock-thickness: root.dock-area-thickness - root.edge;
+    property <length> dock-slot-length: root.landscape
+        ? GridMetrics.column-width(Math.max(0, dock-area.height - 2 * root.edge), root.columns)
+        : root.cell-width;
+    property <length> dock-slot-width: root.landscape ? root.dock-thickness : root.dock-slot-length;
+    property <length> dock-slot-height: root.landscape ? root.dock-slot-length : root.dock-thickness;
+    // Position of a slot in `dock-area`.
+    pure function dock-slot-x(col: int) -> length {
+        return root.landscape ? 0 : root.edge + col * root.dock-slot-length;
+    }
+    pure function dock-slot-y(col: int) -> length {
+        return root.landscape ? root.edge + col * root.dock-slot-length : 0;
+    }
+    // The icon inside a slot (`AppGridItem` centers it).
+    property <length> dock-icon-x: (root.dock-slot-width - root.icon-size) / 2;
+    property <length> dock-icon-y: (root.dock-slot-height - root.icon-size) / 2;
+    // A window position is over the dock.
+    pure function in-dock(x: length, y: length) -> bool {
+        return root.landscape ? x >= dock-area.absolute-position.x : y >= dock-area.absolute-position.y;
+    }
+    property <bool> over-dock: root.dragging && root.in-dock(root.drag-x, root.drag-y);
     property <bool> over-grid: root.dragging && !root.over-dock;
     // A picture or a large folder is dragged: it keeps the point it was grabbed
     // by under the finger, and its target is the cell of its top-left corner.
@@ -189,7 +226,9 @@ component HomeGrid inherits HomeLayoutBase {
     // like `AppGridItem` does).
     property <length> large-icon-x: (root.area-width(2) - root.large-icon-size) / 2;
     property <length> large-icon-y: (root.area-height(2) - root.large-icon-size - Tokens.spacing-2xs - root.label-height) / 2;
-    property <int> target-slot: clamp(floor((root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.cell-width)), 0, root.columns - 1);
+    property <int> target-slot: clamp(floor((root.landscape
+        ? root.drag-y - dock-area.absolute-position.y - root.edge
+        : root.drag-x - dock-area.absolute-position.x - root.edge) / Math.max(1px, root.dock-slot-length)), 0, root.columns - 1);
 
     // Grid cell at a window position.
     pure function col-at(x: length) -> int {
@@ -217,13 +256,16 @@ component HomeGrid inherits HomeLayoutBase {
     // dropping there merges into a folder, anywhere else moves/swaps.
     property <length> icon-left: (root.cell-width - root.icon-size) / 2;
     property <length> in-cell-x: root.over-dock
-        ? root.drag-x - dock-area.absolute-position.x - root.edge - root.target-slot * root.cell-width
+        ? root.drag-x - dock-area.absolute-position.x - root.dock-slot-x(root.target-slot)
         : root.drag-x - root.pages-x - root.target-col * root.cell-width;
     property <length> in-cell-y: root.over-dock
-        ? root.drag-y - dock-area.absolute-position.y
+        ? root.drag-y - dock-area.absolute-position.y - root.dock-slot-y(root.target-slot)
         : root.drag-y - root.pages-y - root.target-row * (root.cell-height + root.row-gap);
-    property <bool> over-icon: root.in-cell-x >= root.icon-left && root.in-cell-x <= root.icon-left + root.icon-size
-        && root.in-cell-y >= GridMetrics.cell-padding && root.in-cell-y <= GridMetrics.cell-padding + root.icon-size;
+    // Top-left corner of the icon in the target cell/slot.
+    property <length> target-icon-x: root.over-dock ? root.dock-icon-x : root.icon-left;
+    property <length> target-icon-y: root.over-dock ? root.dock-icon-y : GridMetrics.cell-padding;
+    property <bool> over-icon: root.in-cell-x >= root.target-icon-x && root.in-cell-x <= root.target-icon-x + root.icon-size
+        && root.in-cell-y >= root.target-icon-y && root.in-cell-y <= root.target-icon-y + root.icon-size;
     // What is in the target grid cell (see `home-cells`).
     property <int> target-cell: root.target-row < root.home-rows ? root.home-cells[(root.current-page * root.home-rows + root.target-row) * root.columns + root.target-col] : 0;
     // An app or a single-cell folder is in the target cell/slot (not a picture).
@@ -301,11 +343,31 @@ component HomeGrid inherits HomeLayoutBase {
         return root.is-resized(item) ? root.resize-rows : item.picture.rows;
     }
 
+    // The rows follow the screen height only in portrait: in landscape (shorter)
+    // the saved rows are kept and the icons shrink, so rotating doesn't move
+    // apps. Landscape only adds rows, if more fit than saved (devices that are
+    // never portrait, e.g. desktop windows). Reported once the size settles
+    // (`rows-timer`): mid-rotation the size and the system bars change apart.
     function report-rows() {
         // Not before the layout has a real size.
-        if root.inner-height > 0 {
-            root.rows-fit(root.row-count);
+        if root.inner-height > 0 && (!root.landscape || root.fit-rows > root.home-rows) {
+            root.rows-fit(root.fit-rows);
         }
+    }
+
+    rows-timer := Timer {
+        interval: 300ms;
+        running: false;
+        triggered => {
+            self.stop();
+            root.report-rows();
+        }
+    }
+
+    // `restart()` alone does nothing on a stopped timer.
+    function schedule-report-rows() {
+        rows-timer.start();
+        rows-timer.restart();
     }
 
     function report-metrics() {
@@ -314,13 +376,16 @@ component HomeGrid inherits HomeLayoutBase {
         }
     }
 
-    changed row-count => { root.report-rows(); }
+    changed fit-rows => { root.schedule-report-rows(); }
+    changed landscape => { root.schedule-report-rows(); }
     changed cell-width => { root.report-metrics(); }
     changed cell-height => { root.report-metrics(); }
     changed row-gap => { root.report-metrics(); }
+    changed icon-size => { root.icon-size-changed(root.icon-size); }
     init => {
-        root.report-rows();
+        root.schedule-report-rows();
         root.report-metrics();
+        root.icon-size-changed(root.icon-size);
     }
 
     // Dragging an app to a side edge flips the page.
@@ -351,7 +416,7 @@ component HomeGrid inherits HomeLayoutBase {
 
     EmptySpaceTouch {
         long-pressed(x, y) => {
-            let in-grid = y < dock-area.absolute-position.y;
+            let in-grid = !root.in-dock(x, y);
             root.empty-long-pressed(x, y, in-grid ? root.current-page : -1, in-grid ? root.col-at(x) : -1, in-grid ? root.row-at(y) : -1);
         }
     }
@@ -372,9 +437,23 @@ component HomeGrid inherits HomeLayoutBase {
         }
     }
 
-    VerticalLayout {
+    // Pages, page dots below them and the dock: below everything (portrait) or
+    // on the right side (landscape), placed by hand to switch between both.
+    property <length> dots-height: 24px;
+    // In landscape its thickness can't come from the column width (that comes
+    // from the space the dock leaves): the item size setting. In portrait the
+    // pages are the whole width, so that's the full icon size (written out to
+    // not depend on `pages-area`).
+    property <length> dock-area-thickness: root.edge + GridMetrics.cell-height(root.landscape
+        ? Math.max(GridMetrics.min-icon-size, AppsLayout.item-size)
+        : GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - 2 * root.edge), root.columns)), false, 0);
+
+    Rectangle {
         pages-area := Rectangle {
-            vertical-stretch: 1;
+            x: 0;
+            y: 0;
+            width: root.landscape ? Math.max(0, root.width - root.dock-area-thickness) : root.width;
+            height: Math.max(0, root.height - root.dots-height - (root.landscape ? 0 : root.dock-area-thickness));
             clip: true;
 
             if root.items.length == 0 && root.pictures.length == 0 && root.dock-items.length == 0 && !root.dragging: VerticalLayout {
@@ -478,35 +557,44 @@ component HomeGrid inherits HomeLayoutBase {
         }
 
         PageDots {
-            height: 24px;
+            x: 0;
+            y: pages-area.height;
+            width: pages-area.width;
+            height: root.dots-height;
             count: root.page-count;
             current: root.current-page;
             visible: root.page-count > 1;
         }
 
-        // Same columns and side padding as the pages; the bottom padding too.
+        // Portrait: same columns and side padding as the pages, and the bottom
+        // padding. Landscape: the same top/bottom padding along the right side,
+        // and the right padding.
         dock-area := Rectangle {
-            height: root.dock-cell-height + root.edge;
+            x: root.landscape ? pages-area.width : 0;
+            y: root.landscape ? 0 : pages-area.height + root.dots-height;
+            width: root.landscape ? root.dock-area-thickness : root.width;
+            height: root.landscape ? root.height : root.dock-area-thickness;
 
             if root.over-dock && !root.merging && root.drop-allowed: DropHighlight {
-                x: root.edge + root.target-slot * root.cell-width;
-                y: 0;
-                width: root.cell-width;
-                height: root.dock-cell-height;
+                x: root.dock-slot-x(root.target-slot);
+                y: root.dock-slot-y(root.target-slot);
+                width: root.dock-slot-width;
+                height: root.dock-slot-height;
             }
 
+            // Merge target: around the icon only.
             if root.over-dock && root.merging: DropHighlight {
-                x: root.edge + root.target-slot * root.cell-width + root.icon-left - GridMetrics.cell-padding;
-                y: 0;
+                x: root.dock-slot-x(root.target-slot) + root.dock-icon-x - GridMetrics.cell-padding;
+                y: root.dock-slot-y(root.target-slot) + root.dock-icon-y - GridMetrics.cell-padding;
                 width: root.icon-size + 2 * GridMetrics.cell-padding;
-                height: root.dock-cell-height;
+                height: root.icon-size + 2 * GridMetrics.cell-padding;
             }
 
             for item in root.dock-items: AppGridItem {
-                x: root.edge + item.col * root.cell-width;
-                y: 0;
-                width: root.cell-width;
-                height: root.dock-cell-height;
+                x: root.dock-slot-x(item.col);
+                y: root.dock-slot-y(item.col);
+                width: root.dock-slot-width;
+                height: root.dock-slot-height;
                 icon-size: root.icon-size;
                 app: item.app;
                 is-folder: item.is-folder;
@@ -777,10 +865,10 @@ export component HomePage inherits Rectangle {
     // the screen width, so a short flick is enough).
     property <length> page-swipe-distance: 32px;
 
-    // Size of the dragged icon: the same as in the view (see AppGridItem, AppListItem).
-    property <length> drag-icon-size: root.grid
-        ? GridMetrics.icon-size(GridMetrics.column-width(root.width - root.left-inset - root.right-inset - 2 * AppsLayout.padding, root.columns))
-        : ListMetrics.icon-size();
+    // Size of the dragged icon: the same as in the view (see AppGridItem,
+    // AppListItem). The grid reports its own (it depends on its layout).
+    property <length> grid-icon-size: AppsLayout.item-size;
+    property <length> drag-icon-size: root.grid ? root.grid-icon-size : ListMetrics.icon-size();
 
     property <length> menu-x;
     property <length> menu-y;
@@ -886,6 +974,7 @@ export component HomePage inherits Rectangle {
                 home-cells: root.cells;
                 dock-cells: root.dock-cells;
                 rows-fit(rows) => { HomeActions.rows-fit(rows); }
+                icon-size-changed(size) => { root.grid-icon-size = size; }
                 page-count: root.page-count;
                 current-page <=> root.current-page;
                 swipe-offset: root.swipe-offset;

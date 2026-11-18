@@ -19,6 +19,8 @@ export component AppsMenuPage inherits Rectangle {
     in property <int> columns: 4;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
+    in property <length> left-inset: 0px;
+    in property <length> right-inset: 0px;
     // Home screen enabled (Settings > Launcher screens): apps can be placed on it,
     // and the Apps Menu closes back to it.
     in property <bool> home-enabled: false;
@@ -62,6 +64,8 @@ export component AppsMenuPage inherits Rectangle {
         VerticalLayout {
             padding-top: root.top-inset + Tokens.spacing-xs;
             padding-bottom: root.bottom-inset;
+            padding-left: root.left-inset;
+            padding-right: root.right-inset;
             spacing: Tokens.spacing-xs;
 
             HorizontalLayout {

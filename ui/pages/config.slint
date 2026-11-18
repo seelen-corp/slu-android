@@ -107,6 +107,10 @@ component SettingsSection inherits VerticalLayout {
 export component ConfigPage inherits Rectangle {
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
+    in property <length> left-inset: 0px;
+    in property <length> right-inset: 0px;
+    // Widest the sections get (see the padding of the page).
+    property <length> max-content-width: 720px;
     in property <LauncherScreens> launcher-screens: LauncherScreens.apps-menu;
     in property <AppsView> apps-view: AppsView.list;
     in property <SwipeDownAction> swipe-down-action: SwipeDownAction.search;
@@ -190,6 +194,10 @@ export component ConfigPage inherits Rectangle {
             padding: Tokens.spacing-m;
             padding-top: root.top-inset + Tokens.spacing-m;
             padding-bottom: root.bottom-inset + Tokens.spacing-2xl;
+            // Clear of the system bars; on wide screens (tablets, landscape,
+            // desktop windows) the sections keep a readable width, centered.
+            padding-left: Math.max(root.left-inset + Tokens.spacing-m, (root.width - root.max-content-width) / 2);
+            padding-right: Math.max(root.right-inset + Tokens.spacing-m, (root.width - root.max-content-width) / 2);
             spacing: Tokens.spacing-2xl;
             alignment: start;
 

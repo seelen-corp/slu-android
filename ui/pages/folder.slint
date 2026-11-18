@@ -21,6 +21,8 @@ export component FolderPage inherits Rectangle {
     in property <int> columns: 4;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
+    in property <length> left-inset: 0px;
+    in property <length> right-inset: 0px;
 
     callback close();
 
@@ -52,7 +54,7 @@ export component FolderPage inherits Rectangle {
     // label, see `AppGrid`) or a list row (`AppListItem`).
     grid-label := GridLabelMetrics { }
     list-label := ListLabelMetrics { }
-    private property <length> grid-icon: GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - 2 * AppsLayout.padding), root.columns));
+    private property <length> grid-icon: GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - root.left-inset - root.right-inset - 2 * AppsLayout.padding), root.columns));
     private property <length> row-height: root.view == AppsView.grid
         ? GridMetrics.cell-height(root.grid-icon, true, AppsLayout.label-lines * grid-label.preferred-height)
         : ListMetrics.row-height(list-label.preferred-height);
@@ -81,6 +83,8 @@ export component FolderPage inherits Rectangle {
         VerticalLayout {
             padding-top: root.top-inset + Tokens.spacing-xs;
             padding-bottom: root.bottom-inset;
+            padding-left: root.left-inset;
+            padding-right: root.right-inset;
 
             // Same padding as the apps below (the space between the rows of the
             // grid is that padding too).

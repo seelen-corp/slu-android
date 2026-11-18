@@ -62,6 +62,8 @@ export component WidgetPickerPage inherits Rectangle {
     in property <bool> loading: false;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
+    in property <length> left-inset: 0px;
+    in property <length> right-inset: 0px;
 
     callback close();
 
@@ -70,10 +72,15 @@ export component WidgetPickerPage inherits Rectangle {
         clicked => { root.close(); }
     }
 
+    // Space for the sheet between the system bars; on wide screens it keeps a
+    // readable width, centered.
+    property <length> max-sheet-width: 640px;
+    property <length> available-width: Math.max(0, root.width - root.left-inset - root.right-inset - 2 * Tokens.spacing-m);
+
     sheet := Rectangle {
-        x: Tokens.spacing-m;
+        width: Math.min(root.available-width, root.max-sheet-width);
+        x: root.left-inset + Tokens.spacing-m + (root.available-width - self.width) / 2;
         y: root.top-inset + Tokens.spacing-2xl;
-        width: root.width - 2 * Tokens.spacing-m;
         height: root.height - self.y - root.bottom-inset - Tokens.spacing-m;
         background: Tokens.slu-std-bg-color;
         border-radius: Tokens.radius-l;

@@ -166,6 +166,8 @@ export component MainWindow inherits Window {
             columns: root.home-columns;
             top-inset: root.safe-area-insets.top;
             bottom-inset: root.safe-area-insets.bottom;
+            left-inset: root.safe-area-insets.left;
+            right-inset: root.safe-area-insets.right;
             close => { root.show-home(); }
         }
 
@@ -177,6 +179,8 @@ export component MainWindow inherits Window {
             home-enabled: root.home-enabled;
             top-inset: root.safe-area-insets.top;
             bottom-inset: root.safe-area-insets.bottom;
+            left-inset: root.safe-area-insets.left;
+            right-inset: root.safe-area-insets.right;
             close => { root.show-home(); }
             init => {
                 if root.focus-search-on-open {
@@ -190,6 +194,8 @@ export component MainWindow inherits Window {
             loading: root.widget-providers-loading;
             top-inset: root.safe-area-insets.top;
             bottom-inset: root.safe-area-insets.bottom;
+            left-inset: root.safe-area-insets.left;
+            right-inset: root.safe-area-insets.right;
             close => { root.show-home(); }
         }
     }
@@ -243,6 +249,8 @@ export component SettingsWindow inherits Window {
     ConfigPage {
         top-inset: root.safe-area-insets.top;
         bottom-inset: root.safe-area-insets.bottom + root.ad-banner-height;
+        left-inset: root.safe-area-insets.left;
+        right-inset: root.safe-area-insets.right;
         rewarded-state: root.rewarded-state;
         ad-privacy-options: root.ad-privacy-options;
         watch-rewarded-ad => { root.watch-rewarded-ad(); }
