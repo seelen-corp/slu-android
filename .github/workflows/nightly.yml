@@ -31,6 +31,8 @@ jobs:
       version: ${{ steps.gen-version.outputs.result }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - run: git fetch --tags --prune
 
       - name: Create or update 'nightly' tag (force overwrite)
@@ -52,14 +54,20 @@ jobs:
               core.setFailed('version not found in Cargo.toml [package]');
               return '';
             }
-            const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(2, 12);
-            return `${version}-nightly.${timestamp}`;
+            // Same as the versionName Gradle gives nightlies (build.gradle.kts)
+            const { execSync } = require('child_process');
+            const commitNumber = execSync('git rev-list --count HEAD').toString().trim();
+            return `${version}.${commitNumber}`;
 
   build-apk:
     needs: update-tag
     runs-on: ubuntu-latest
+    env:
+      SLU_NIGHTLY: "true"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           cache-key-prefix: rust-release
@@ -75,26 +83,31 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "SLU_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build release APK
+      # APK for sideloading, AAB (bundle) for manual uploads to Google Play
+      - name: Build release APK and AAB
         working-directory: android
         env:
           SLU_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SLU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SLU_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
-      - name: Rename APK
+      - name: Rename APK and AAB
         run: |
           mkdir -p dist
           mv android/app/build/outputs/apk/release/app-release.apk \
             "dist/slu-launcher_${{ needs.update-tag.outputs.version }}.apk"
+          mv android/app/build/outputs/bundle/release/app-release.aab \
+            "dist/slu-launcher_${{ needs.update-tag.outputs.version }}.aab"
           rm -f "$RUNNER_TEMP/release.keystore"
 
-      - name: Upload APK to artifacts
+      - name: Upload APK and AAB to artifacts
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*.aab
 
   publish:
     needs:
@@ -140,10 +153,10 @@ jobs:
           name: apk
           path: dist
 
-      - name: Upload APK to the nightly release
+      - name: Upload APK and AAB to the nightly release
         uses: svenstaro/upload-release-action@v2
         with:
           tag: nightly
-          file: dist/*.apk
+          file: dist/*
           file_glob: true
           overwrite: true

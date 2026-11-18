@@ -10,10 +10,26 @@ val cargoVersion: String = run {
     Regex("""(?m)^version\s*=\s*"([^"]+)"""").find(pkg)?.groupValues?.get(1)
         ?: error("version not found in Cargo.toml [package]")
 }
-val cargoVersionCode: Int = run {
-    val (major, minor, patch) = cargoVersion.substringBefore('-').split('.').map { it.toInt() }
-    major * 10000 + minor * 100 + patch
+
+// Number of commits up to HEAD. It only grows on master, so it is the
+// versionCode of every build (Play requires it to increase on each upload) and
+// the 4th component of nightly versions. Needs the full history: CI checks out
+// with `fetch-depth: 0`.
+val commitNumber: Int = run {
+    fun git(vararg args: String): String = providers.exec {
+        workingDir = rootProject.file("..")
+        commandLine("git", *args)
+    }.standardOutput.asText.get().trim()
+
+    if (git("rev-parse", "--is-shallow-repository") == "true") {
+        error("shallow git clone: the versionCode needs the full history (fetch-depth: 0)")
+    }
+    git("rev-list", "--count", "HEAD").toInt()
 }
+
+// Releases are "X.Y.Z"; nightlies (SLU_NIGHTLY=true) are "X.Y.Z.<commit number>".
+val appVersionName: String =
+    if (System.getenv("SLU_NIGHTLY") == "true") "$cargoVersion.$commitNumber" else cargoVersion
 
 // AdMob ids (Settings only, see Ads.java). Not secret: they ship inside the
 // APK anyway. Debug builds always use Google's test ids (real ads must never
@@ -32,14 +48,16 @@ object AdMobIds {
 
 android {
     namespace = "com.seelen.slu_launcher"
-    compileSdk = 34
+    // 36 (Android 16) is the minimum target Google Play accepts for new apps
+    // and updates (since 2026-08-31).
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.seelen.slu_launcher"
         minSdk = 26
-        targetSdk = 34
-        versionCode = cargoVersionCode
-        versionName = cargoVersion
+        targetSdk = 36
+        versionCode = commitNumber
+        versionName = appVersionName
     }
 
     buildFeatures {

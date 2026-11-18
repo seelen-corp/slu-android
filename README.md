@@ -94,8 +94,10 @@ installed a release build). Uninstall it first, then reinstall:
 
 ## Release
 
-The version lives only in `Cargo.toml` (`[package].version`); Gradle derives
-`versionName` and `versionCode` (`major*10000 + minor*100 + patch`) from it.
+The version lives only in `Cargo.toml` (`[package].version`). Gradle uses it as
+`versionName` (`X.Y.Z` for releases, `X.Y.Z.<commit number>` for nightlies), and
+the commit number (`git rev-list --count HEAD`) as `versionCode`, so it always
+grows. Builds need the full git history (no shallow clones).
 
 To publish: bump the version in `Cargo.toml`, commit, then push a matching tag
 (`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml`
@@ -104,5 +106,7 @@ it to a GitHub release.
 
 Required repository secrets: `ANDROID_KEYSTORE_BASE64` (the `.keystore` file,
 base64-encoded), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-`ANDROID_KEY_PASSWORD`. Locally, without those env vars, release builds are
-signed with the dev `android/release.keystore`.
+`ANDROID_KEY_PASSWORD`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` (service account key
+used to upload the AAB to the Play Console `internal` track). Locally, without
+those env vars, release builds are signed with the dev
+`android/release.keystore`.

@@ -20,13 +20,18 @@ jobs:
         run: cargo fmt -- --check
 
       # The crate only builds for Android targets, so clippy goes through cargo-ndk
+      # Slint's build script compiles Java against android.jar: point it to the
+      # compileSdk platform installed by the setup action (as Gradle does).
       - name: Linter
-        run: cargo ndk -t arm64-v8a -P 34 clippy --locked -- -D warnings
+        run: ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar" cargo ndk -t arm64-v8a -P 34 clippy --locked -- -D warnings
 
   build-debug:
     runs-on: ubuntu-latest
     steps:
+      # Full history: Gradle derives the versionCode from the commit count
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           cache-key-prefix: rust-debug

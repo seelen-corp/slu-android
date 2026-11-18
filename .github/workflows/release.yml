@@ -72,6 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           cache-key-prefix: rust-release
@@ -87,19 +89,22 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "SLU_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build release APK
+      # APK for the GitHub release, AAB (bundle) for Google Play
+      - name: Build release APK and AAB
         working-directory: android
         env:
           SLU_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SLU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SLU_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
-      - name: Rename APK
+      - name: Rename APK and AAB
         run: |
           mkdir -p dist
           mv android/app/build/outputs/apk/release/app-release.apk \
             "dist/slu-launcher_${{ needs.get-version.outputs.version }}.apk"
+          mv android/app/build/outputs/bundle/release/app-release.aab \
+            "dist/slu-launcher_${{ needs.get-version.outputs.version }}.aab"
           rm -f "$RUNNER_TEMP/release.keystore"
 
       - name: Upload APK to artifacts
@@ -107,6 +112,12 @@ jobs:
         with:
           name: apk
           path: dist/*.apk
+
+      - name: Upload AAB to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab
+          path: dist/*.aab
 
       - name: Upload APK to release
         uses: svenstaro/upload-release-action@v2
@@ -132,3 +143,29 @@ jobs:
               release_id: process.env.releaseId,
               draft: false,
             });
+
+  # Requires the GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret (a service account
+  # with release permissions on the app in Play Console). The very first
+  # release of an app must be uploaded by hand in Play Console; the API only
+  # works after that.
+  publish-google-play:
+    needs: [get-version, build-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download AAB
+        uses: actions/download-artifact@v4
+        with:
+          name: aab
+          path: dist
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.seelen.slu_launcher
+          releaseFiles: dist/*.aab
+          releaseName: v${{ needs.get-version.outputs.version }}
+          track: internal
+          # While the app has never been published, Play only accepts drafts.
+          # Switch to `completed` once the first release is live.
+          status: draft
