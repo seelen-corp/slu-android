@@ -933,16 +933,46 @@ impl Config {
     /// The entry can be moved to `slot` (its top-left cell): all its cells fit,
     /// and no image or large folder is on them (single-cell entries make room,
     /// see `move_to`).
+    ///
+    /// An app that is not an entry of Home (in a folder, or only in the Apps
+    /// Menu: carried there by a drag, see `detach_app`) moves as a single cell.
     pub fn can_move(&self, key: &EntryKey, slot: Slot) -> bool {
-        let Some(from) = self.position(key) else {
-            return false;
+        let from = self.position(key);
+        let detached;
+        let content = match (from, key) {
+            (Some(from), _) => &self.home[from].content,
+            (None, EntryKey::App(app)) => {
+                detached = HomeContent::App(app.clone());
+                &detached
+            }
+            (None, _) => return false,
         };
-        let entry = &self.home[from];
-        let span = entry.content.span();
-        self.fits(&entry.content, slot)
+        let span = content.span();
+        self.fits(content, slot)
             && !self.home.iter().enumerate().any(|(i, other)| {
-                i != from && other.content.keeps_its_cells() && other.overlaps(slot, span)
+                Some(i) != from && other.content.keeps_its_cells() && other.overlaps(slot, span)
             })
+    }
+
+    /// An app dragged onto Home from outside its entries (a folder's view, the
+    /// Apps Menu) becomes an entry of its own before it's placed: out of the
+    /// folder it's in, if any, on free cells of `page` or the next ones
+    /// (`relocate`), so the entries it lands on can take that place. No-op if
+    /// it's already an entry of Home (it moves as usual) or not installed.
+    fn detach_app(&mut self, key: &EntryKey, page: u32, installed: impl Fn(&AppRef) -> bool) {
+        let EntryKey::App(app) = key else {
+            return;
+        };
+        if self.position(key).is_some() || !installed(app) {
+            return;
+        }
+        for entry in &mut self.home {
+            if let HomeContent::Folder(folder) = &mut entry.content {
+                folder.apps.retain(|a| a != app);
+            }
+        }
+        self.dissolve_small_folders();
+        self.push_relocated(HomeContent::App(app.clone()), page);
     }
 
     /// Moves an entry of Home to `slot` (see `can_move`). The entries it lands
@@ -953,6 +983,7 @@ impl Config {
         if !self.can_move(key, slot) {
             return;
         }
+        self.detach_app(key, slot.grid_page(), &installed);
         let Some(from) = self.position(key) else {
             return;
         };
@@ -986,6 +1017,11 @@ impl Config {
     /// it. Anything else (a folder, an empty slot) is a `move_to`.
     pub fn merge_into(&mut self, key: &EntryKey, slot: Slot, installed: impl Fn(&AppRef) -> bool) {
         self.drop_uninstalled(&installed);
+        // Only onto an entry: an empty slot is a `move_to`, which detaches it
+        // itself if it can move there.
+        if self.home.iter().any(|entry| entry.covers(slot)) {
+            self.detach_app(key, slot.grid_page(), &installed);
+        }
         let target = self.home.iter().position(|entry| entry.covers(slot));
         let (EntryKey::App(app), Some(from), Some(target)) = (key, self.position(key), target)
         else {
@@ -1342,6 +1378,7 @@ impl Config {
         installed: impl Fn(&AppRef) -> bool,
     ) {
         self.drop_uninstalled(&installed);
+        self.detach_app(key, 0, &installed);
         let order = self.list_order();
         // Not in the list: they keep their place.
         let images: Vec<HomeEntry> = self
@@ -2255,6 +2292,51 @@ mod tests {
         config.merge_into(&EntryKey::Folder(id), cell(0, 0, 1), all);
         assert!(folder(&config, cell(0, 0, 1)).is_some());
         assert_eq!(config.home.len(), 2);
+    }
+
+    #[test]
+    fn apps_dragged_from_outside_home_become_entries() {
+        let mut config = Config::default();
+        for n in 1..=3 {
+            config.add_to_home(app(n), all);
+        }
+        config.merge_into(&key(2), cell(0, 0, 0), all);
+        config.merge_into(&key(3), cell(0, 0, 0), all);
+        // Folder [1, 2, 3] in (0,0,0). App 2 dragged out of it to a free cell.
+        assert!(config.can_move(&key(2), cell(0, 1, 1)));
+        config.move_to(&key(2), cell(0, 1, 1), all);
+        assert_eq!(
+            folder(&config, cell(0, 0, 0)).unwrap().apps,
+            vec![app(1), app(3)]
+        );
+        assert!(config.home.contains(&HomeEntry::app(app(2), cell(0, 1, 1))));
+        assert_eq!(config.home.len(), 2);
+
+        // App 3 dragged out onto app 2: the folder dissolves into app 1, and
+        // 2 + 3 make a new folder.
+        config.merge_into(&key(3), cell(0, 1, 1), all);
+        assert_eq!(config.home[0], HomeEntry::app(app(1), cell(0, 0, 0)));
+        assert_eq!(
+            folder(&config, cell(0, 1, 1)).unwrap().apps,
+            vec![app(2), app(3)]
+        );
+        assert_eq!(config.home.len(), 2);
+
+        // An app only in the Apps Menu, dropped on app 1: swaps into its cell,
+        // app 1 goes to a free cell.
+        config.move_to(&key(4), cell(0, 0, 0), all);
+        assert!(config.home.contains(&HomeEntry::app(app(4), cell(0, 0, 0))));
+        assert!(config.is_on_home(&app(1)));
+        assert_eq!(config.home.len(), 3);
+        // Not installed: nothing.
+        config.move_to(&key(5), cell(0, 2, 2), |a| *a != app(5));
+        assert!(!config.is_on_home(&app(5)));
+        // List views: placed in the list.
+        config.move_to_index(&key(6), 0, all);
+        assert_eq!(
+            config.home[config.list_order()[0]].content,
+            HomeContent::App(app(6))
+        );
     }
 
     #[test]

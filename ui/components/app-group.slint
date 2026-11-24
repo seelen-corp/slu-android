@@ -10,6 +10,8 @@ export component AppGroupBox inherits VerticalLayout {
     in property <AppGroup> group;
     in property <AppsView> view: AppsView.list;
     in property <bool> home-enabled: false;
+    // The apps can be carried out to Home (`AppItemBase.carriable`).
+    in property <bool> carriable: false;
     // Grid view.
     in property <int> columns: 4;
 
@@ -30,6 +32,7 @@ export component AppGroupBox inherits VerticalLayout {
             app: app;
             show-icon: root.view == AppsView.list;
             home-enabled: root.home-enabled;
+            carriable: root.carriable;
         }
     }
 
@@ -37,6 +40,7 @@ export component AppGroupBox inherits VerticalLayout {
         apps: root.group.apps;
         columns: root.columns;
         home-enabled: root.home-enabled;
+        carriable: root.carriable;
         edge: 0;
     }
 }

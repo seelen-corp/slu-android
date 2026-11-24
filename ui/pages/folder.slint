@@ -1,6 +1,6 @@
 import { I18n } from "../i18n.slint";
 import { Tokens } from "../tokens.slint";
-import { HomeActions, Interaction } from "../app-actions.slint";
+import { HomeActions, Interaction, LauncherActions } from "../app-actions.slint";
 import { AppsView, FolderItem } from "../types.slint";
 import { AppsLayout } from "../apps-layout.slint";
 import { AppCollection } from "../components/app-collection.slint";
@@ -12,12 +12,14 @@ import { WallpaperLabel } from "../components/wallpaper-label.slint";
 // A folder of Home, opened: its title as the whole first row (a transparent
 // input, edited by tapping it), then its apps in the view chosen in Settings,
 // over the wallpaper (behind the scrim, like a modal). Long press an app to
-// reorder it (drag) or open its menu. Tapping the background,
+// reorder it (drag) or open its menu; holding it dragged over the margins
+// carries it out to Home. Tapping the background,
 // swiping down (at the top) or Back closes it.
 export component FolderPage inherits Rectangle {
     in property <FolderItem> folder;
     in property <AppsView> view: AppsView.list;
-    // Grid view.
+    // Grid view: the columns of Home. A folder always has 3 (`folder-columns`),
+    // centered, with cells as wide as Home's (or wider, if Home has fewer).
     in property <int> columns: 4;
     in property <length> top-inset: 0px;
     in property <length> bottom-inset: 0px;
@@ -54,7 +56,8 @@ export component FolderPage inherits Rectangle {
     // label, see `AppGrid`) or a list row (`AppListItem`).
     grid-label := GridLabelMetrics { }
     list-label := ListLabelMetrics { }
-    private property <length> grid-icon: GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - root.left-inset - root.right-inset - 2 * AppsLayout.padding), root.columns));
+    private property <int> folder-columns: 3;
+    private property <length> grid-icon: GridMetrics.icon-size(GridMetrics.cell-width(Math.max(0, root.width - root.left-inset - root.right-inset - 2 * AppsLayout.padding), root.folder-columns, root.columns));
     private property <length> row-height: root.view == AppsView.grid
         ? GridMetrics.cell-height(root.grid-icon, true, AppsLayout.label-lines * grid-label.preferred-height)
         : ListMetrics.row-height(list-label.preferred-height);
@@ -63,6 +66,29 @@ export component FolderPage inherits Rectangle {
     changed shown-title => {
         if !root.editing {
             title-input.text = root.shown-title;
+        }
+    }
+
+    // An app dragged and held over the margins (anywhere but over the apps)
+    // is carried out of the folder onto Home (`Interaction.carrying`); the
+    // folder closes (the app's entry here keeps the touch).
+    private property <bool> over-margin: collection.dragging && collection.drag-confirmed && !Interaction.carrying && !(
+        collection.drag-x >= collection.absolute-position.x + collection.apps-x
+        && collection.drag-x <= collection.absolute-position.x + collection.apps-x + collection.apps-width
+        && collection.drag-y >= collection.absolute-position.y
+        && collection.drag-y <= collection.absolute-position.y + collection.height);
+
+    Timer {
+        interval: 500ms;
+        running: root.over-margin;
+        triggered => {
+            Interaction.carried-app = collection.drag-app;
+            Interaction.carry-x = collection.drag-x;
+            Interaction.carry-y = collection.drag-y;
+            Interaction.carry-dropped = false;
+            collection.cancel-drag();
+            Interaction.carrying = true;
+            LauncherActions.haptic();
         }
     }
 
@@ -139,12 +165,14 @@ export component FolderPage inherits Rectangle {
             collection := AppCollection {
                 apps: root.folder.apps;
                 view: root.view;
-                columns: root.columns;
+                columns: root.folder-columns;
+                cell-columns: root.columns;
                 home-enabled: true;
                 in-folder: true;
                 show-badges: true;
                 // In the folder's own order, which the user sets by dragging.
                 sortable: true;
+                carriable: true;
                 app-moved(app, index) => { HomeActions.move-in-folder(root.folder.id, app, index); }
                 // Only as tall as its apps (it scrolls if they don't fit): the
                 // space below is background.

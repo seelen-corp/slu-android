@@ -21,15 +21,22 @@ export component AppCollection inherits Rectangle {
     in property <bool> in-folder: false;
     // Notification badges (the apps of a folder of Home).
     in property <bool> show-badges: false;
-    // Grid view.
+    // Grid view (see `AppGrid.cell-columns`).
     in property <int> columns: 4;
+    in property <int> cell-columns: root.columns;
     // Apps reordered by dragging them (long press, then move): `app-moved`.
     in property <bool> sortable: false;
+    // The apps can be carried out to Home (`AppItemBase.carriable`).
+    in property <bool> carriable: false;
     // Height of all the apps (with their padding), scrolled or not.
     out property <length> content-height: root.grouped ? root.groups-height
         : root.view == AppsView.grid
-        ? GridMetrics.grid-height(root.width, root.columns, root.apps.length, AppsLayout.label-lines * grid-label.preferred-height, AppsLayout.padding)
+        ? GridMetrics.grid-height(root.width, root.columns, root.cell-columns, root.apps.length, AppsLayout.label-lines * grid-label.preferred-height, AppsLayout.padding)
         : 2 * AppsLayout.padding + root.apps.length * root.row-height;
+    // Horizontal extent of the apps (the grid's columns are centered), from
+    // the left of the collection.
+    out property <length> apps-x: root.grid-view ? root.edge + (root.inner-width - root.columns * root.grid-cell-width) / 2 : 0;
+    out property <length> apps-width: root.grid-view ? root.columns * root.grid-cell-width : root.width;
     // How far the apps scroll (<= 0: they fit). For `TopSwipeArea`.
     out property <length> scroll-range: root.content-height - root.height;
     // An app is being dragged (until it's dropped or the drag is cancelled).
@@ -56,16 +63,19 @@ export component AppCollection inherits Rectangle {
     list-label := ListLabelMetrics { }
 
     property <bool> grouped: root.groups.length > 0;
+    property <bool> grid-view: !root.grouped && root.view == AppsView.grid;
     property <length> groups-height: 0;
     property <length> row-height: ListMetrics.row-height(list-label.preferred-height);
     property <length> edge: AppsLayout.padding;
+    property <length> inner-width: Math.max(0, root.width - 2 * root.edge);
+    property <length> grid-cell-width: GridMetrics.cell-width(root.inner-width, root.columns, root.cell-columns);
 
     // Drag state (window coordinates), shared with the grid.
-    property <AppItem> drag-app;
+    out property <AppItem> drag-app;
     property <int> drag-index: -1;
-    property <length> drag-x;
-    property <length> drag-y;
-    property <bool> drag-confirmed: false;
+    out property <length> drag-x;
+    out property <length> drag-y;
+    out property <bool> drag-confirmed: false;
 
     // List views: the gap between rows nearest the finger.
     property <float> drag-rows: (root.drag-y - root.absolute-position.y - root.scroll-y - root.edge) / Math.max(1px, root.row-height);
@@ -88,6 +98,10 @@ export component AppCollection inherits Rectangle {
     }
 
     function end-list-drag(x: length, y: length) {
+        // Cancelled meanwhile (e.g. it was carried out of the folder).
+        if !root.dragging {
+            return;
+        }
         root.drag-x = x;
         root.drag-y = y;
         root.app-moved(root.drag-app, root.insert-index);
@@ -129,6 +143,7 @@ export component AppCollection inherits Rectangle {
                 view: root.view;
                 columns: root.columns;
                 home-enabled: root.home-enabled;
+                carriable: root.carriable;
             }
         }
     }
@@ -155,6 +170,7 @@ export component AppCollection inherits Rectangle {
                 in-folder: root.in-folder;
                 show-badge: root.show-badges;
                 draggable: root.sortable;
+                carriable: root.carriable;
                 content-hidden: root.dragging && root.drag-index == index;
                 drag-started(x, y) => { root.start-drag(app, index, x, y); }
                 drag-confirmed => { root.drag-confirmed = true; }
@@ -194,7 +210,9 @@ export component AppCollection inherits Rectangle {
             in-folder: root.in-folder;
             show-badges: root.show-badges;
             columns: root.columns;
+            cell-columns: root.cell-columns;
             sortable: root.sortable;
+            carriable: root.carriable;
             dragging <=> root.dragging;
             drag-app <=> root.drag-app;
             drag-index <=> root.drag-index;
@@ -209,7 +227,7 @@ export component AppCollection inherits Rectangle {
     // no icons, so there it's its title). The same size as in the view.
     if root.dragging: Rectangle {
         property <length> icon-size: root.view == AppsView.grid
-            ? GridMetrics.icon-size(GridMetrics.column-width(Math.max(0, root.width - 2 * root.edge), root.columns))
+            ? GridMetrics.icon-size(root.grid-cell-width)
             : ListMetrics.icon-size();
 
         width: Math.max(96px, AppsLayout.item-size);

@@ -57,6 +57,28 @@ export component MainWindow inherits Window {
     // behind the scrim.
     private property <bool> dimmed: !root.home-enabled || root.apps-menu-open || root.folder-open || root.widget-picker-open;
 
+    // An app carried from a folder or the Apps Menu to Home (see
+    // `Interaction.carrying`): Home is shown at once. The Apps Menu is kept
+    // alive (hidden) until the carry ends, as its entry has the touch; the
+    // folder view always is.
+    private property <bool> carrying: Interaction.carrying;
+    private property <bool> menu-carrying: false;
+
+    changed carrying => {
+        if self.carrying {
+            if root.apps-menu-open {
+                root.menu-carrying = true;
+                root.apps-menu-open = false;
+                key-handler.focus();
+            }
+            root.close-folder();
+        } else if root.menu-carrying {
+            // Only now: the search would rebuild the entry that had the touch.
+            root.menu-carrying = false;
+            LauncherActions.search("");
+        }
+    }
+
     changed dimmed => {
         Tokens.wallpaper-dimmed = self.dimmed;
         LauncherActions.wallpaper-dimmed-changed();
@@ -171,7 +193,8 @@ export component MainWindow inherits Window {
             close => { root.show-home(); }
         }
 
-        if !root.home-enabled || root.apps-menu-open: menu := AppsMenuPage {
+        if !root.home-enabled || root.apps-menu-open || root.menu-carrying: menu := AppsMenuPage {
+            visible: !root.menu-carrying;
             apps: root.apps;
             groups: root.app-groups;
             view: root.apps-view;

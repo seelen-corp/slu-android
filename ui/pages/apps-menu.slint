@@ -117,6 +117,9 @@ export component AppsMenuPage inherits Rectangle {
                 view: root.view;
                 columns: root.columns;
                 home-enabled: root.home-enabled;
+                // Long press and move an app: the Apps Menu gives way to Home,
+                // where it's placed (`Interaction.carrying`).
+                carriable: root.home-enabled;
             }
         }
     }

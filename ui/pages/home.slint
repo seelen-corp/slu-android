@@ -85,6 +85,9 @@ component HomeLayoutBase inherits Rectangle {
     // The dragged entry moved beyond the tap slop (it will be dropped, not show
     // its menu). Until then, the drag started by the long press may be cancelled.
     in-out property <bool> drag-confirmed: false;
+    // Bumped to drop the dragged entry where it is (an app carried from a
+    // folder or the Apps Menu was released, see `HomePage`).
+    in property <int> drop-requests: 0;
 
     // Window coordinates, and the grid cell there (-1 outside the grid pages).
     callback empty-long-pressed(x: length, y: length, page: int, col: int, row: int);
@@ -396,6 +399,9 @@ component HomeGrid inherits HomeLayoutBase {
     property <bool> at-right-edge: root.drag-x > root.pages-x + root.inner-width - root.edge-zone;
 
     function end-drag(x: length, y: length) {
+        if !root.dragging {
+            return;
+        }
         root.drag-x = x;
         root.drag-y = y;
         if !root.drop-allowed {
@@ -413,6 +419,8 @@ component HomeGrid inherits HomeLayoutBase {
         }
         root.dragging = false;
     }
+
+    changed drop-requests => { root.end-drag(root.drag-x, root.drag-y); }
 
     EmptySpaceTouch {
         long-pressed(x, y) => {
@@ -707,6 +715,9 @@ component HomeList inherits HomeLayoutBase {
     property <int> insert-index: clamp(round(root.drag-rows), 0, root.items.length);
 
     function end-drag(x: length, y: length) {
+        if !root.dragging {
+            return;
+        }
         root.drag-x = x;
         root.drag-y = y;
         if root.merging {
@@ -717,6 +728,8 @@ component HomeList inherits HomeLayoutBase {
         }
         root.dragging = false;
     }
+
+    changed drop-requests => { root.end-drag(root.drag-x, root.drag-y); }
 
     TopSwipeArea {
         active: !Interaction.item-lifted && !root.dragging;
@@ -838,6 +851,9 @@ export component HomePage inherits Rectangle {
     // Abort a drag in progress (e.g. the launcher went to the background).
     public function cancel-drag() {
         root.dragging = false;
+        root.carried-drag = false;
+        Interaction.carry-dropped = false;
+        Interaction.carrying = false;
         Interaction.item-lifted = false;
         Interaction.resizing-picture = false;
         Interaction.widget-pressed = false;
@@ -853,6 +869,15 @@ export component HomePage inherits Rectangle {
     property <HomeItem> drag-item;
     property <length> drag-x;
     property <length> drag-y;
+    property <bool> drag-confirmed: false;
+    property <int> drop-requests: 0;
+    // The drag is an app carried here from a folder or the Apps Menu
+    // (`Interaction.carrying`): its entry there has the touch and reports the
+    // finger; Home only follows it and drops it on release.
+    property <bool> carried-drag: false;
+    property <bool> carrying: Interaction.carrying;
+    property <length> carry-x: Interaction.carry-x;
+    property <length> carry-y: Interaction.carry-y;
     // While dragging there's one more (empty) page, to move an app to a new page.
     property <int> page-count: root.dragging ? root.pages + 1 : root.pages;
 
@@ -900,6 +925,45 @@ export component HomePage inherits Rectangle {
         root.menu-col = col;
         root.menu-row = row;
         home-menu.show();
+    }
+
+    changed carrying => {
+        if self.carrying {
+            // Not an entry of Home (yet): no cell of its own.
+            root.drag-item = {
+                is-folder: false,
+                is-picture: false,
+                app: Interaction.carried-app,
+                dock: false,
+                page: -1,
+                col: -1,
+                row: -1,
+            };
+            root.drag-x = Interaction.carry-x;
+            root.drag-y = Interaction.carry-y;
+            root.drag-confirmed = true;
+            root.dragging = true;
+            root.carried-drag = true;
+        } else if root.carried-drag {
+            root.carried-drag = false;
+            if Interaction.carry-dropped && root.dragging {
+                root.drag-x = Interaction.carry-x;
+                root.drag-y = Interaction.carry-y;
+                root.drop-requests += 1;
+            } else {
+                root.dragging = false;
+            }
+        }
+    }
+    changed carry-x => {
+        if root.carried-drag {
+            root.drag-x = self.carry-x;
+        }
+    }
+    changed carry-y => {
+        if root.carried-drag {
+            root.drag-y = self.carry-y;
+        }
     }
 
     changed pages => { root.clamp-page(); }
@@ -983,6 +1047,8 @@ export component HomePage inherits Rectangle {
                 drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
+                drag-confirmed <=> root.drag-confirmed;
+                drop-requests: root.drop-requests;
                 empty-long-pressed(x, y, page, col, row) => { root.show-menu(x, y, page, col, row); }
                 open-folder(folder) => { root.open-folder(folder); }
             }
@@ -996,6 +1062,8 @@ export component HomePage inherits Rectangle {
                 drag-item <=> root.drag-item;
                 drag-x <=> root.drag-x;
                 drag-y <=> root.drag-y;
+                drag-confirmed <=> root.drag-confirmed;
+                drop-requests: root.drop-requests;
                 empty-long-pressed(x, y, page, col, row) => { root.show-menu(x, y, page, col, row); }
                 open-folder(folder) => { root.open-folder(folder); }
                 swiped-down => { root.swipe-down(); }

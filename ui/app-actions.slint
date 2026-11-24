@@ -17,7 +17,9 @@ export global AppActions {
 // the `HomeItem` the UI shows.
 export global HomeActions {
     // Moves an entry of Home to a grid cell or dock slot. If another one is
-    // there, both swap places.
+    // there, both swap places. Also for an app carried from outside Home's
+    // entries (out of its folder, or from the Apps Menu; see
+    // `Interaction.carrying`), here and in `merge-into` / `move-to-index`.
     callback move-to(item: HomeItem, dock: bool, page: int, col: int, row: int);
     // Drops an entry on the one in a grid cell or dock slot: an app dropped on
     // an app makes a folder with both; on a folder, it joins it. Otherwise
@@ -102,4 +104,15 @@ export global Interaction {
     // A widget of Home is being touched: vertical swipes are its own (e.g. to
     // scroll its list), not Home's.
     in-out property <bool> widget-pressed: false;
+
+    // An app carried out of a folder's view or the Apps Menu onto Home, to
+    // place it there. Its entry in the folder/Apps Menu keeps the touch (that
+    // view is hidden, not destroyed) and reports the finger here, in window
+    // coordinates; Home shows the drag and, on release, drops it if
+    // `carry-dropped` (false: the touch was lost, nothing moves).
+    in-out property <bool> carrying: false;
+    in-out property <AppItem> carried-app;
+    in-out property <length> carry-x;
+    in-out property <length> carry-y;
+    in-out property <bool> carry-dropped: false;
 }
