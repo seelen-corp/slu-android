@@ -99,14 +99,27 @@ The version lives only in `Cargo.toml` (`[package].version`). Gradle uses it as
 the commit number (`git rev-list --count HEAD`) as `versionCode`, so it always
 grows. Builds need the full git history (no shallow clones).
 
-To publish: bump the version in `Cargo.toml`, commit, then push a matching tag
-(`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml`
-runs CI, checks the tag against `Cargo.toml`, builds the signed APK and attaches
-it to a GitHub release.
+`.github/workflows/publish.yml` handles both nightlies and releases, and uploads
+each commit's bundle to Google Play only once (Play accepts each `versionCode`
+once, but a bundle can be assigned to any track):
+
+- Every push to `master` updates the `nightly` GitHub pre-release and sends the
+  bundle to the closed testing track (`alpha`).
+- A pushed `vX.Y.Z` tag (checked against `Cargo.toml`) creates the GitHub
+  release with the APK and sends the bundle to the `internal` track. If the
+  nightly already uploaded that commit, the existing bundle is assigned instead
+  (keeping the nightly `versionName`).
+
+To publish: bump the version in `Cargo.toml`, commit, tag it and push both at
+once so the release gets a clean `X.Y.Z`:
+
+```powershell
+git tag v0.2.0
+git push --atomic origin master v0.2.0
+```
 
 Required repository secrets: `ANDROID_KEYSTORE_BASE64` (the `.keystore` file,
 base64-encoded), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
 `ANDROID_KEY_PASSWORD`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` (service account key
-used to upload the AAB to the Play Console `internal` track). Locally, without
-those env vars, release builds are signed with the dev
-`android/release.keystore`.
+used to upload the AAB to Play Console). Locally, without those env vars,
+release builds are signed with the dev `android/release.keystore`.
