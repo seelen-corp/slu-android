@@ -1,6 +1,8 @@
 package com.seelen.slu_launcher;
 
+import android.app.role.RoleManager;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -9,7 +11,9 @@ import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
 
 import java.io.File;
@@ -28,6 +32,8 @@ public class HomeActivity extends SluNativeActivity {
 
     private static final String TAG = "slu_launcher";
     private static final int REQUEST_PICK_IMAGE = 1;
+    // 2 and 3 are WidgetHost's.
+    private static final int REQUEST_HOME_ROLE = 4;
     /** Longest side of the images copied for Home; bigger ones are scaled down. */
     private static final int MAX_IMAGE_SIDE = 1600;
 
@@ -126,6 +132,70 @@ public class HomeActivity extends SluNativeActivity {
     public void onBackPressed() {}
 
     /**
+     * First run: asks to be the default Home app (system dialog, Android 10+),
+     * then for the notification access the badges need. Each step is skipped if
+     * already granted. Called from any thread (Rust, system-modules/system.rs).
+     */
+    public void requestSetupPermissions() {
+        runOnUiThread(() -> {
+            if (!requestHomeRole()) {
+                requestNotificationAccess();
+            }
+        });
+    }
+
+    /** Whether the role dialog was opened (its result arrives in onActivityResult). */
+    private boolean requestHomeRole() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // No role dialog: the system asks for the Home app on the Home button.
+            return false;
+        }
+        RoleManager roles = getSystemService(RoleManager.class);
+        if (roles == null || !roles.isRoleAvailable(RoleManager.ROLE_HOME)
+                || roles.isRoleHeld(RoleManager.ROLE_HOME)) {
+            return false;
+        }
+        try {
+            startActivityForResult(roles.createRequestRoleIntent(RoleManager.ROLE_HOME), REQUEST_HOME_ROLE);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "no role request dialog", e);
+            return false;
+        }
+    }
+
+    /**
+     * Opens the system notification access page (the launcher's own toggle on
+     * Android 11+, where supported), unless it's already allowed.
+     */
+    private void requestNotificationAccess() {
+        ComponentName service = new ComponentName(this, NotificationBadgeService.class);
+        String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+        if (enabled != null) {
+            for (String component : enabled.split(":")) {
+                if (service.equals(ComponentName.unflattenFromString(component))) {
+                    return;
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Intent detail = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
+            detail.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, service.flattenToString());
+            try {
+                startActivity(detail);
+                return;
+            } catch (ActivityNotFoundException e) {
+                // Some vendors don't have the detail page: the full list below.
+            }
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "no notification access settings", e);
+        }
+    }
+
+    /**
      * Opens the system image picker, to put an image on Home. Called from any
      * thread (Rust, system-modules/images.rs); the result arrives in
      * {@link #onActivityResult}.
@@ -149,6 +219,11 @@ public class HomeActivity extends SluNativeActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (widgets.onActivityResult(requestCode, resultCode)) {
+            return;
+        }
+        if (requestCode == REQUEST_HOME_ROLE) {
+            // Granted or not: the next setup step.
+            requestNotificationAccess();
             return;
         }
         if (requestCode != REQUEST_PICK_IMAGE || resultCode != RESULT_OK

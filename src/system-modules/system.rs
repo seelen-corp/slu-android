@@ -63,6 +63,16 @@ pub fn open_notification_access_settings() -> Result<()> {
     start_action("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
 }
 
+/// First run: asks to be the default Home app, then for notification access,
+/// each only if not granted yet (`HomeActivity.requestSetupPermissions`).
+/// Home process only.
+pub fn request_setup_permissions() -> Result<()> {
+    android_ctx::with_activity(|env, activity| {
+        env.call_method(activity, "requestSetupPermissions", "()V", &[])?;
+        Ok(())
+    })
+}
+
 /// Pulls down the notification shade. `StatusBarManager.expandNotificationsPanel`
 /// is not public API, but it's allowed for apps (with `EXPAND_STATUS_BAR`) and
 /// it's what launchers use for the swipe down on Home.

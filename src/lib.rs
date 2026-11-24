@@ -1197,7 +1197,15 @@ impl From<ads::RewardedState> for RewardedState {
 fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
     let window = MainWindow::new()?;
     setup_i18n(window.global::<I18n>(), locale);
+    // A new install: Home not seeded yet (`refresh` seeds it).
+    let first_run = !config::load()?.home_seeded;
     refresh(&window)?;
+    if first_run {
+        log_error(
+            "request setup permissions",
+            system::request_setup_permissions(),
+        );
+    }
     // Back on screen (after opening an app, Settings, the wallpaper picker...):
     // Settings runs in another process, so reload the config, and start again
     // from Home.
