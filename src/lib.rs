@@ -392,6 +392,11 @@ thread_local! {
     /// Grid cell size (width, height), space between rows and inset of what's
     /// drawn in a cell, logical px (`HomeActions.grid-metrics`).
     static GRID_METRICS: Cell<((f32, f32), f32, f32)> = const { Cell::new(((80.0, 100.0), 0.0, 4.0)) };
+    /// The starting Home as seeded in this run, without its widgets
+    /// (`seeded_entries`): while Home is still that, it's laid out again for the
+    /// rows the UI reports (`HomeActions.rows-fit`), so it stays anchored to the
+    /// bottom of the screen.
+    static SEEDED_HOME: RefCell<Option<Vec<config::HomeEntry>>> = const { RefCell::new(None) };
 }
 
 fn picture_image(file: &str) -> slint::Image {
@@ -631,10 +636,10 @@ const SOCIAL_PACKAGES: &[&str] = &[
 const GOOGLE_FOLDER_TITLE: &str = "Google";
 
 /// Starting layout of Home (`Config::seed_home`), from the installed apps:
-/// the dock with the phone, messages, browser and camera apps; the gallery and
-/// the Play Store on the grid; and the Google, Social and Games folders.
-#[allow(clippy::type_complexity)]
-fn default_home() -> Result<(Vec<AppRef>, Vec<AppRef>, Vec<(String, Vec<AppRef>)>)> {
+/// the dock with the phone, messages, browser and camera apps; the Play Store,
+/// the gallery and the Google, Social and Games folders on the grid. The clock
+/// widget is added apart (`add_clock_widget`).
+fn default_home() -> Result<config::HomeSeed> {
     let installed = apps::get_installed_apps()?;
     let to_ref = |app: &apps::AppInfo| AppRef::new(&app.package_name, &app.activity_name);
     // The first launcher entry of a package.
@@ -661,10 +666,6 @@ fn default_home() -> Result<(Vec<AppRef>, Vec<AppRef>, Vec<(String, Vec<AppRef>)
     .into_iter()
     .filter_map(role)
     .collect();
-    let grid: Vec<AppRef> = [role(apps::Role::Gallery), of_package("com.android.vending")]
-        .into_iter()
-        .flatten()
-        .collect();
 
     let locale = current_locale();
     let mut google = Vec::new();
@@ -680,18 +681,84 @@ fn default_home() -> Result<(Vec<AppRef>, Vec<AppRef>, Vec<(String, Vec<AppRef>)
             google.push(to_ref(app));
         }
     }
-    let folders = vec![
-        (GOOGLE_FOLDER_TITLE.to_owned(), google),
-        (
-            rust_i18n::t!("home.folder_social", locale = locale.as_str()).into_owned(),
-            social,
-        ),
-        (
-            rust_i18n::t!("home.folder_games", locale = locale.as_str()).into_owned(),
-            games,
-        ),
-    ];
-    Ok((dock, grid, folders))
+    Ok(config::HomeSeed {
+        dock,
+        play_store: of_package("com.android.vending"),
+        gallery: role(apps::Role::Gallery),
+        google: config::SeedFolder {
+            title: GOOGLE_FOLDER_TITLE.to_owned(),
+            apps: google,
+        },
+        social: config::SeedFolder {
+            title: rust_i18n::t!("home.folder_social", locale = locale.as_str()).into_owned(),
+            apps: social,
+        },
+        games: config::SeedFolder {
+            title: rust_i18n::t!("home.folder_games", locale = locale.as_str()).into_owned(),
+            apps: games,
+        },
+    })
+}
+
+/// The entries of the starting Home but widgets, as laid out (`SEEDED_HOME`).
+fn seeded_entries(config: &config::Config) -> Vec<config::HomeEntry> {
+    config
+        .home
+        .iter()
+        .filter(|entry| !matches!(entry.content, HomeContent::Widget(_)))
+        .cloned()
+        .collect()
+}
+
+/// Puts the system clock app's widget (its digital one, if it has several) on
+/// the top-left corner of Home. The system may ask the user to allow it first.
+fn add_clock_widget(window: &MainWindow) {
+    let clock = match apps::role_package(apps::Role::Clock) {
+        Ok(Some(clock)) => clock,
+        Ok(None) => return,
+        Err(err) => {
+            log::error!("failed to resolve the clock app: {err}");
+            return;
+        }
+    };
+    let weak = window.as_weak();
+    // Listing the providers is slow (it renders their previews).
+    std::thread::spawn(move || {
+        let mut providers = widgets::providers().unwrap_or_else(|err| {
+            log::error!("failed to load the widget providers: {err}");
+            Vec::new()
+        });
+        let of_clock = |provider: &&widgets::WidgetProvider| {
+            provider
+                .component
+                .split_once('/')
+                .is_some_and(|(package, _)| package == clock)
+        };
+        let index = providers
+            .iter()
+            .position(|provider| {
+                of_clock(&provider) && provider.component.to_lowercase().contains("digital")
+            })
+            .or_else(|| providers.iter().position(|provider| of_clock(&provider)));
+        let Some(index) = index else {
+            return;
+        };
+        let mut provider = providers.swap_remove(index);
+        provider.preview = None;
+        weak.upgrade_in_event_loop(move |_| {
+            // The grid metrics live on this thread.
+            let (cell, gap, inset) = GRID_METRICS.get();
+            let span = provider.default_span(cell, gap, inset);
+            let top_left = Slot::Grid {
+                page: 0,
+                row: 0,
+                col: 0,
+            };
+            PENDING_WIDGET.set(Some((0, Some(top_left), span)));
+            log_error("add clock widget", widgets::add(&provider.component));
+        })
+        .ok();
+    });
 }
 
 /// Reloads the config, the installed apps and the system look into the main
@@ -699,15 +766,21 @@ fn default_home() -> Result<(Vec<AppRef>, Vec<AppRef>, Vec<(String, Vec<AppRef>)
 fn refresh(window: &MainWindow) -> Result<()> {
     let mut config = config::load()?;
     // First run: Home starts with the usual apps instead of blank.
+    // (An existing Home, from before seeding existed, is only marked as seeded.)
+    let mut seeding = false;
     if !config.home_seeded {
-        let (dock, grid, folders) = default_home()?;
-        config = config::update(|config| config.seed_home(dock, grid, folders))?;
+        let seed = default_home()?;
+        config = config::update(|config| seeding = config.seed_home(seed))?;
     }
     // e.g. the Home grid was made smaller in Settings (another process).
     if config.clone().normalize() {
         config = config::update(|config| {
             config.normalize();
         })?;
+    }
+    if seeding {
+        SEEDED_HOME.set(Some(seeded_entries(&config)));
+        add_clock_widget(window);
     }
 
     apply_accent(window.global::<Tokens>());
@@ -1511,10 +1584,30 @@ fn run_home(locale: &str, on_resume: &ResumeHook) -> Result<()> {
         if config::load().is_ok_and(|config| config.home_rows == rows) {
             return;
         }
+        // The starting Home, untouched: laid out again for these rows.
+        let seed = SEEDED_HOME
+            .with_borrow(Option::is_some)
+            .then(|| {
+                default_home()
+                    .inspect_err(|err| log::error!("failed to lay out Home again: {err}"))
+                    .ok()
+            })
+            .flatten();
         // Apps in rows that no longer fit move to the first free cells.
         edit_home(&weak, "save home rows", |config| {
             config.home_rows = rows;
-            config.normalize();
+            let untouched =
+                SEEDED_HOME.with_borrow(|seeded| seeded.as_ref() == Some(&seeded_entries(config)));
+            match seed {
+                Some(seed) if untouched => {
+                    config.reseed_home(seed);
+                    SEEDED_HOME.set(Some(seeded_entries(config)));
+                }
+                _ => {
+                    SEEDED_HOME.set(None);
+                    config.normalize();
+                }
+            }
         });
     });
 

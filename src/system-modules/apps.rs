@@ -52,6 +52,7 @@ pub enum Role {
     Browser,
     Camera,
     Gallery,
+    Clock,
 }
 
 /// `Intent.FLAG_ACTIVITY_NEW_TASK`: required when starting an Activity of
@@ -253,6 +254,11 @@ fn role_intents<'local>(env: &mut JNIEnv<'local>, role: Role) -> Result<Vec<JObj
                 Some("image/*"),
                 None,
             )?,
+        ],
+        // `AlarmClock.ACTION_SHOW_ALARMS`, then `ACTION_SET_ALARM`.
+        Role::Clock => vec![
+            role_intent(env, "android.intent.action.SHOW_ALARMS", None, None, None)?,
+            role_intent(env, "android.intent.action.SET_ALARM", None, None, None)?,
         ],
     };
     Ok(intents)

@@ -284,6 +284,27 @@ pub struct Folder {
 /// Cells covered by a large folder (`Folder::large`).
 pub const LARGE_FOLDER_SPAN: (u32, u32) = (2, 2);
 
+/// A folder of the starting Home (`HomeSeed`).
+#[derive(Debug, Clone, Default)]
+pub struct SeedFolder {
+    pub title: String,
+    pub apps: Vec<AppRef>,
+}
+
+/// The starting Home, from the installed apps (`Config::seed_home`, laid out by
+/// `Config::lay_out_seed`). The system clock widget goes top-left too, but it's
+/// added apart: the system binds it asynchronously (`widgets::add`).
+#[derive(Debug, Clone, Default)]
+pub struct HomeSeed {
+    /// Dock apps, in order (as many as fit).
+    pub dock: Vec<AppRef>,
+    pub play_store: Option<AppRef>,
+    pub gallery: Option<AppRef>,
+    pub google: SeedFolder,
+    pub social: SeedFolder,
+    pub games: SeedFolder,
+}
+
 /// An image picked by the user, on the Home grid only (never in the dock or the
 /// list views). It covers `columns` x `rows` cells from its slot (the top-left
 /// cell) and is drawn covering all of them.
@@ -703,55 +724,178 @@ impl Config {
         self.compact_pages();
     }
 
-    /// Gives an empty Home its starting layout, so it never starts blank: `dock`
-    /// apps in the dock (as many as fit), then `grid` apps and `folders` (title,
-    /// apps) on the first free cells. Apps already placed are skipped; a folder
-    /// with a single app is that app, an empty one is left out. No-op once
-    /// `home_seeded`, or if Home already has entries.
-    pub fn seed_home(
-        &mut self,
-        dock: Vec<AppRef>,
-        grid: Vec<AppRef>,
-        folders: Vec<(String, Vec<AppRef>)>,
-    ) {
+    /// Gives an empty Home its starting layout (`HomeSeed`), so it never starts
+    /// blank. No-op once `home_seeded`, or if Home already has entries.
+    /// Returns whether it was laid out.
+    pub fn seed_home(&mut self, seed: HomeSeed) -> bool {
         if std::mem::replace(&mut self.home_seeded, true) || !self.home.is_empty() {
-            return;
+            return false;
         }
-        for app in dock {
-            let col = self.home.len() as u32;
+        self.lay_out_seed(seed);
+        true
+    }
+
+    /// Lays out the starting Home again, e.g. for the real number of rows (only
+    /// known once the UI has measured the screen, after `seed_home`). Widgets
+    /// stay; every other entry is replaced.
+    pub fn reseed_home(&mut self, seed: HomeSeed) {
+        self.home_seeded = true;
+        self.home
+            .retain(|entry| matches!(entry.content, HomeContent::Widget(_)));
+        self.lay_out_seed(seed);
+        self.normalize();
+    }
+
+    /// The starting layout of Home: the dock, and the grid anchored to the
+    /// corners of the first page (the clock widget goes top-left, added later,
+    /// see `HomeSeed`); the rest at the bottom of the second page:
+    ///
+    /// ```text
+    ///   page 1                               page 2
+    ///   clock    clock    .        .         .        .  .  .
+    ///   .        .        .        games     .        .  .  .
+    ///   google   .        social   social    .        .  .  .
+    ///   play     .        social   social    gallery  .  .  .
+    /// ```
+    ///
+    /// An app goes once, where it's first listed (dock, Play Store, gallery,
+    /// social, games, Google). A folder with a single app is that app (social:
+    /// in the bottom-right cell), an empty one is left out. Whatever doesn't fit
+    /// where it should (small grid, a widget there) goes to the second page too,
+    /// next to the gallery, from the bottom row up.
+    fn lay_out_seed(&mut self, seed: HomeSeed) {
+        let mut taken: Vec<AppRef> = self
+            .home
+            .iter()
+            .flat_map(|entry| match &entry.content {
+                HomeContent::App(app) => vec![app.clone()],
+                HomeContent::Folder(folder) => folder.apps.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let mut take = |app: &AppRef| {
+            let new = !taken.contains(app);
+            if new {
+                taken.push(app.clone());
+            }
+            new
+        };
+
+        let mut col = 0;
+        for app in seed.dock {
             if col >= self.home_columns {
                 break;
             }
-            if !self.is_on_home(&app) {
+            if take(&app) {
                 self.home.push(HomeEntry::app(app, Slot::Dock { col }));
+                col += 1;
             }
         }
-        for app in grid {
-            if !self.is_on_home(&app) {
-                self.push_relocated(HomeContent::App(app), 0);
-            }
-        }
-        for (title, apps) in folders {
-            let mut unique: Vec<AppRef> = Vec::new();
-            for app in apps {
-                if !self.is_on_home(&app) && !unique.contains(&app) {
-                    unique.push(app);
-                }
-            }
-            let mut apps = unique;
-            let content = match apps.len() {
-                0 => continue,
-                1 => HomeContent::App(apps.remove(0)),
-                _ => HomeContent::Folder(Folder {
-                    id: self.next_folder_id(),
-                    title: clean_title(&title),
+
+        let (columns, rows) = (self.home_columns, self.home_rows);
+        let at = |row: u32, col: u32| Slot::Grid { page: 0, row, col };
+        let second_page = |row: u32, col: u32| Slot::Grid { page: 1, row, col };
+        let bottom = rows.saturating_sub(1);
+        let right = columns.saturating_sub(1);
+        let large_fits = self.clamped_span(LARGE_FOLDER_SPAN) == LARGE_FOLDER_SPAN;
+        // Placed in this order: on a small grid, the first ones keep their cells.
+        let mut placements: Vec<(HomeContent, Slot)> = Vec::new();
+
+        let play_store = seed.play_store.filter(|app| take(app));
+        let gallery = seed.gallery.filter(|app| take(app));
+        let mut seeded = |folder: SeedFolder, large: bool| {
+            let mut apps: Vec<AppRef> = folder.apps.into_iter().filter(|app| take(app)).collect();
+            match apps.len() {
+                0 => None,
+                1 => Some(HomeContent::App(apps.remove(0))),
+                _ => Some(HomeContent::Folder(Folder {
+                    // Set when placed: `next_folder_id`.
+                    id: 0,
+                    title: clean_title(&folder.title),
                     apps,
-                    large: false,
-                }),
-            };
-            self.push_relocated(content, 0);
+                    large,
+                })),
+            }
+        };
+        let social = seeded(seed.social, large_fits);
+        let games = seeded(seed.games, false);
+        let google = seeded(seed.google, false);
+
+        // Games go right above the social folder.
+        let social_top = match social {
+            Some(social) => {
+                let (span_columns, span_rows) = social.span();
+                let top = rows.saturating_sub(span_rows);
+                placements.push((social, at(top, columns.saturating_sub(span_columns))));
+                top
+            }
+            None => rows,
+        };
+        if let Some(games) = games {
+            placements.push((games, at(social_top.saturating_sub(1), right)));
+        }
+        if let Some(play_store) = play_store {
+            placements.push((HomeContent::App(play_store), at(bottom, 0)));
+        }
+        if let Some(google) = google {
+            placements.push((google, at(bottom.saturating_sub(1), 0)));
+        }
+        if let Some(gallery) = gallery {
+            placements.push((HomeContent::App(gallery), second_page(bottom, 0)));
+        }
+
+        // Every entry where it should be first, then the ones that didn't fit.
+        let mut misplaced = Vec::new();
+        for (content, slot) in placements {
+            let free = self.fits(&content, slot)
+                && !self
+                    .home
+                    .iter()
+                    .any(|entry| entry.overlaps(slot, content.span()));
+            if free {
+                let content = self.with_new_folder_id(content);
+                self.home.push(HomeEntry { content, slot });
+            } else {
+                misplaced.push(content);
+            }
+        }
+        for mut content in misplaced {
+            self.clamp_span(&mut content);
+            let content = self.with_new_folder_id(content);
+            match self.free_area_from_bottom(1, content.span()) {
+                Some(slot) => self.home.push(HomeEntry { content, slot }),
+                None => self.push_relocated(content, 1),
+            }
         }
         self.compact_pages();
+    }
+
+    /// The first free area of `span` cells (already clamped) on grid page
+    /// `page`, from its bottom row up, left to right.
+    fn free_area_from_bottom(&self, page: u32, (columns, rows): (u32, u32)) -> Option<Slot> {
+        (0..=self.home_rows.saturating_sub(rows))
+            .rev()
+            .flat_map(|row| {
+                (0..=self.home_columns.saturating_sub(columns)).map(move |col| Slot::Grid {
+                    page,
+                    row,
+                    col,
+                })
+            })
+            .find(|&slot| {
+                !self
+                    .home
+                    .iter()
+                    .any(|entry| entry.overlaps(slot, (columns, rows)))
+            })
+    }
+
+    /// A folder gets an id not used on Home (`next_folder_id`).
+    fn with_new_folder_id(&self, mut content: HomeContent) -> HomeContent {
+        if let HomeContent::Folder(folder) = &mut content {
+            folder.id = self.next_folder_id();
+        }
+        content
     }
 
     /// Apps just installed go to Home: it's in use and the user wants it.
@@ -1772,42 +1916,149 @@ mod tests {
         assert_eq!(Config::parse(&config.serialize()), config);
     }
 
+    fn seed() -> HomeSeed {
+        let folder = |title: &str, apps: Vec<AppRef>| SeedFolder {
+            title: title.to_owned(),
+            apps,
+        };
+        HomeSeed {
+            dock: vec![app(1), app(2)],
+            play_store: Some(app(3)),
+            gallery: Some(app(4)),
+            // The gallery is a Google app too: it goes once.
+            google: folder("Google", vec![app(5), app(4), app(6), app(5)]),
+            social: folder("Social", vec![app(7), app(8)]),
+            games: folder("Games", vec![app(9), app(2), app(10)]),
+        }
+    }
+
+    fn content_at(config: &Config, slot: Slot) -> Option<&HomeContent> {
+        config
+            .home
+            .iter()
+            .find(|entry| entry.slot == slot)
+            .map(|entry| &entry.content)
+    }
+
     #[test]
     fn seed_home_fills_an_empty_home_once() {
         let mut config = Config::default();
-        config.seed_home(
-            vec![app(1), app(2)],
-            vec![app(3), app(1)],
-            vec![
-                ("Google".to_owned(), vec![app(4), app(5), app(4)]),
-                ("Social".to_owned(), vec![app(6)]),
-                ("Games".to_owned(), vec![app(2)]),
-            ],
-        );
+        assert!(config.seed_home(seed()));
         assert!(config.home_seeded);
-        assert_eq!(config.home[0].slot, Slot::Dock { col: 0 });
-        assert_eq!(config.home[1].slot, Slot::Dock { col: 1 });
-        assert_eq!(config.home[2], HomeEntry::app(app(3), cell(0, 0, 0)));
-        let folder = folder(&config, cell(0, 0, 1)).expect("a folder");
+        // 4 x 5 grid.
         assert_eq!(
-            (folder.title.as_str(), &folder.apps),
-            ("Google", &vec![app(4), app(5)])
+            config.home[0],
+            HomeEntry::app(app(1), Slot::Dock { col: 0 })
         );
-        // A single app goes alone; an empty folder (app 2 is in the dock) is skipped.
-        assert_eq!(config.home[4], HomeEntry::app(app(6), cell(0, 0, 2)));
-        assert_eq!(config.home.len(), 5);
+        assert_eq!(
+            config.home[1],
+            HomeEntry::app(app(2), Slot::Dock { col: 1 })
+        );
+        assert_eq!(
+            content_at(&config, cell(0, 4, 0)),
+            Some(&HomeContent::App(app(3)))
+        );
+        assert_eq!(
+            content_at(&config, cell(1, 4, 0)),
+            Some(&HomeContent::App(app(4)))
+        );
+        let social = folder(&config, cell(0, 3, 2)).expect("the social folder");
+        assert!(social.large);
+        assert_eq!(social.apps, vec![app(7), app(8)]);
+        let games = folder(&config, cell(0, 2, 3)).expect("the games folder");
+        assert_eq!(games.apps, vec![app(9), app(10)]);
+        let google = folder(&config, cell(0, 3, 0)).expect("the Google folder");
+        assert_eq!(
+            (google.title.as_str(), &google.apps),
+            ("Google", &vec![app(5), app(6)])
+        );
+        let mut ids: Vec<u32> = [social.id, games.id, google.id].into();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(config.home.len(), 7);
 
         // Emptied by the user: stays empty.
         config.home.clear();
-        config.seed_home(vec![app(1)], vec![], vec![]);
+        assert!(!config.seed_home(seed()));
         assert!(config.home.is_empty());
+    }
+
+    #[test]
+    fn seed_home_single_app_folders() {
+        let mut config = Config::default();
+        config.seed_home(HomeSeed {
+            social: SeedFolder {
+                title: "Social".to_owned(),
+                apps: vec![app(7)],
+            },
+            games: SeedFolder {
+                title: "Games".to_owned(),
+                apps: vec![app(9)],
+            },
+            ..seed()
+        });
+        assert_eq!(
+            content_at(&config, cell(0, 4, 3)),
+            Some(&HomeContent::App(app(7)))
+        );
+        assert_eq!(
+            content_at(&config, cell(0, 3, 3)),
+            Some(&HomeContent::App(app(9)))
+        );
+    }
+
+    #[test]
+    fn seed_home_on_a_narrow_grid() {
+        let mut config = Config {
+            home_columns: 2,
+            ..Config::default()
+        };
+        config.seed_home(seed());
+        assert!(folder(&config, cell(0, 3, 0)).is_some_and(|social| social.large));
+        assert!(folder(&config, cell(0, 2, 1)).is_some());
+        // The Play Store and Google cells are the social folder's: second page,
+        // next to the gallery, from the bottom up.
+        assert_eq!(
+            content_at(&config, cell(1, 4, 0)),
+            Some(&HomeContent::App(app(4)))
+        );
+        assert_eq!(
+            content_at(&config, cell(1, 4, 1)),
+            Some(&HomeContent::App(app(3)))
+        );
+        assert!(folder(&config, cell(1, 3, 0)).is_some_and(|google| google.title == "Google"));
+    }
+
+    #[test]
+    fn reseed_home_keeps_widgets() {
+        let mut config = Config::default();
+        config.seed_home(seed());
+        config.add_widget(1, "clock/Widget", (4, 2), 0, Some(cell(0, 0, 0)));
+        config.home_rows = 7;
+        config.reseed_home(seed());
+        assert!(folder(&config, cell(0, 5, 2)).is_some_and(|social| social.large));
+        assert!(folder(&config, cell(0, 4, 3)).is_some());
+        assert_eq!(
+            content_at(&config, cell(0, 6, 0)),
+            Some(&HomeContent::App(app(3)))
+        );
+        assert_eq!(
+            content_at(&config, cell(1, 6, 0)),
+            Some(&HomeContent::App(app(4)))
+        );
+        assert!(matches!(
+            content_at(&config, cell(0, 0, 0)),
+            Some(HomeContent::Widget(widget)) if widget.id == 1
+        ));
+        assert_eq!(config.home.len(), 8);
     }
 
     #[test]
     fn seed_home_keeps_an_existing_home() {
         let mut config = Config::default();
         config.add_to_home(app(1), all);
-        config.seed_home(vec![app(2)], vec![app(3)], vec![]);
+        assert!(!config.seed_home(seed()));
         assert!(config.home_seeded);
         assert_eq!(config.home.len(), 1);
     }
