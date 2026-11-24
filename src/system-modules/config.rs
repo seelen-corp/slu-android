@@ -18,9 +18,9 @@ static PATH: OnceLock<PathBuf> = OnceLock::new();
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LauncherScreens {
     /// A single screen listing every app.
-    #[default]
     AppsMenu,
     /// A Home screen with the apps placed by the user, plus the Apps Menu.
+    #[default]
     HomeAndAppsMenu,
 }
 
@@ -72,11 +72,11 @@ impl SwipeDownAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AppsView {
     /// Rows with icon and title.
-    #[default]
     List,
     /// Rows with the title only.
     TextList,
     /// Icons with the title below.
+    #[default]
     Grid,
 }
 
@@ -516,6 +516,9 @@ pub struct Config {
     /// The Apps Menu shows its apps grouped by their first letter (while not
     /// searching).
     pub group_apps_by_letter: bool,
+    /// Home got its starting layout (`seed_home`), or already had entries: it's
+    /// never filled again, even if the user empties it.
+    pub home_seeded: bool,
     /// Apps on Home. Entries of apps that are not installed are kept (they come
     /// back if the app is reinstalled, or mid-update when it's briefly gone),
     /// until the user edits Home.
@@ -541,6 +544,7 @@ impl Default for Config {
             badge_position: BadgePosition::default(),
             add_new_apps_to_home: true,
             group_apps_by_letter: true,
+            home_seeded: false,
             home: Vec::new(),
         }
     }
@@ -695,6 +699,57 @@ impl Config {
         self.drop_uninstalled(&installed);
         if !self.is_on_home(&app) {
             self.push_relocated(HomeContent::App(app), 0);
+        }
+        self.compact_pages();
+    }
+
+    /// Gives an empty Home its starting layout, so it never starts blank: `dock`
+    /// apps in the dock (as many as fit), then `grid` apps and `folders` (title,
+    /// apps) on the first free cells. Apps already placed are skipped; a folder
+    /// with a single app is that app, an empty one is left out. No-op once
+    /// `home_seeded`, or if Home already has entries.
+    pub fn seed_home(
+        &mut self,
+        dock: Vec<AppRef>,
+        grid: Vec<AppRef>,
+        folders: Vec<(String, Vec<AppRef>)>,
+    ) {
+        if std::mem::replace(&mut self.home_seeded, true) || !self.home.is_empty() {
+            return;
+        }
+        for app in dock {
+            let col = self.home.len() as u32;
+            if col >= self.home_columns {
+                break;
+            }
+            if !self.is_on_home(&app) {
+                self.home.push(HomeEntry::app(app, Slot::Dock { col }));
+            }
+        }
+        for app in grid {
+            if !self.is_on_home(&app) {
+                self.push_relocated(HomeContent::App(app), 0);
+            }
+        }
+        for (title, apps) in folders {
+            let mut unique: Vec<AppRef> = Vec::new();
+            for app in apps {
+                if !self.is_on_home(&app) && !unique.contains(&app) {
+                    unique.push(app);
+                }
+            }
+            let mut apps = unique;
+            let content = match apps.len() {
+                0 => continue,
+                1 => HomeContent::App(apps.remove(0)),
+                _ => HomeContent::Folder(Folder {
+                    id: self.next_folder_id(),
+                    title: clean_title(&title),
+                    apps,
+                    large: false,
+                }),
+            };
+            self.push_relocated(content, 0);
         }
         self.compact_pages();
     }
@@ -1394,6 +1449,11 @@ impl Config {
                         config.group_apps_by_letter = group;
                     }
                 }
+                "home_seeded" => {
+                    if let Ok(seeded) = value.parse() {
+                        config.home_seeded = seeded;
+                    }
+                }
                 "home" => {
                     if let Some(entry) = parse_home_entry(value) {
                         config.home.push(entry);
@@ -1461,7 +1521,7 @@ impl Config {
 
     fn serialize(&self) -> String {
         let mut text = format!(
-            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\nadd_new_apps_to_home={}\ngroup_apps_by_letter={}\n",
+            "launcher_screens={}\napps_view={}\nswipe_down={}\nicon_shape={}\nicon_corner_radius={}\nlegacy_icons={}\nhome_columns={}\nhome_rows={}\nitem_size_grid={}\nitem_size_list={}\nitem_size_text_list={}\napps_padding={}\nlabel_lines={}\nbadge_position={}\nadd_new_apps_to_home={}\ngroup_apps_by_letter={}\nhome_seeded={}\n",
             self.launcher_screens.as_str(),
             self.apps_view.as_str(),
             self.swipe_down.as_str(),
@@ -1478,6 +1538,7 @@ impl Config {
             self.badge_position.as_str(),
             self.add_new_apps_to_home,
             self.group_apps_by_letter,
+            self.home_seeded,
         );
         for entry in &self.home {
             let slot = entry.slot.serialize();
@@ -1707,7 +1768,48 @@ mod tests {
         config.badge_position = BadgePosition::BottomLeft;
         config.add_new_apps_to_home = false;
         config.group_apps_by_letter = false;
+        config.home_seeded = true;
         assert_eq!(Config::parse(&config.serialize()), config);
+    }
+
+    #[test]
+    fn seed_home_fills_an_empty_home_once() {
+        let mut config = Config::default();
+        config.seed_home(
+            vec![app(1), app(2)],
+            vec![app(3), app(1)],
+            vec![
+                ("Google".to_owned(), vec![app(4), app(5), app(4)]),
+                ("Social".to_owned(), vec![app(6)]),
+                ("Games".to_owned(), vec![app(2)]),
+            ],
+        );
+        assert!(config.home_seeded);
+        assert_eq!(config.home[0].slot, Slot::Dock { col: 0 });
+        assert_eq!(config.home[1].slot, Slot::Dock { col: 1 });
+        assert_eq!(config.home[2], HomeEntry::app(app(3), cell(0, 0, 0)));
+        let folder = folder(&config, cell(0, 0, 1)).expect("a folder");
+        assert_eq!(
+            (folder.title.as_str(), &folder.apps),
+            ("Google", &vec![app(4), app(5)])
+        );
+        // A single app goes alone; an empty folder (app 2 is in the dock) is skipped.
+        assert_eq!(config.home[4], HomeEntry::app(app(6), cell(0, 0, 2)));
+        assert_eq!(config.home.len(), 5);
+
+        // Emptied by the user: stays empty.
+        config.home.clear();
+        config.seed_home(vec![app(1)], vec![], vec![]);
+        assert!(config.home.is_empty());
+    }
+
+    #[test]
+    fn seed_home_keeps_an_existing_home() {
+        let mut config = Config::default();
+        config.add_to_home(app(1), all);
+        config.seed_home(vec![app(2)], vec![app(3)], vec![]);
+        assert!(config.home_seeded);
+        assert_eq!(config.home.len(), 1);
     }
 
     #[test]
@@ -1726,7 +1828,10 @@ mod tests {
 
     #[test]
     fn new_apps_off_or_without_home() {
-        let mut config = Config::default();
+        let mut config = Config {
+            launcher_screens: LauncherScreens::AppsMenu,
+            ..Config::default()
+        };
         assert!(!config.add_new_app(app(1)));
         config.launcher_screens = LauncherScreens::HomeAndAppsMenu;
         config.add_new_apps_to_home = false;

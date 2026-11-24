@@ -594,10 +594,115 @@ fn to_index(value: i32) -> u32 {
     value.max(0) as u32
 }
 
+/// Well-known social apps, besides the ones declaring the social category
+/// (few do).
+const SOCIAL_PACKAGES: &[&str] = &[
+    "com.whatsapp",
+    "com.whatsapp.w4b",
+    "com.instagram.android",
+    "com.instagram.barcelona",
+    "com.facebook.katana",
+    "com.facebook.lite",
+    "com.facebook.orca",
+    "com.facebook.mlite",
+    "org.telegram.messenger",
+    "org.telegram.plus",
+    "org.thunderdog.challegram",
+    "org.thoughtcrime.securesms",
+    "com.twitter.android",
+    "com.zhiliaoapp.musically",
+    "com.ss.android.ugc.trill",
+    "com.snapchat.android",
+    "com.discord",
+    "com.reddit.frontpage",
+    "com.linkedin.android",
+    "com.pinterest",
+    "com.tumblr",
+    "jp.naver.line.android",
+    "com.tencent.mm",
+    "com.viber.voip",
+    "com.skype.raider",
+    "xyz.blueskyweb.app",
+    "org.joinmastodon.android",
+    "com.vkontakte.android",
+];
+
+/// Title of the default Google folder: a brand name, the same in every language.
+const GOOGLE_FOLDER_TITLE: &str = "Google";
+
+/// Starting layout of Home (`Config::seed_home`), from the installed apps:
+/// the dock with the phone, messages, browser and camera apps; the gallery and
+/// the Play Store on the grid; and the Google, Social and Games folders.
+#[allow(clippy::type_complexity)]
+fn default_home() -> Result<(Vec<AppRef>, Vec<AppRef>, Vec<(String, Vec<AppRef>)>)> {
+    let installed = apps::get_installed_apps()?;
+    let to_ref = |app: &apps::AppInfo| AppRef::new(&app.package_name, &app.activity_name);
+    // The first launcher entry of a package.
+    let of_package = |package: &str| {
+        installed
+            .iter()
+            .find(|app| app.package_name == package)
+            .map(to_ref)
+    };
+    let role = |role: apps::Role| {
+        apps::role_package(role)
+            .inspect_err(|err| log::error!("failed to resolve the {role:?} app: {err}"))
+            .ok()
+            .flatten()
+            .and_then(|package| of_package(&package))
+    };
+
+    let dock: Vec<AppRef> = [
+        apps::Role::Phone,
+        apps::Role::Messages,
+        apps::Role::Browser,
+        apps::Role::Camera,
+    ]
+    .into_iter()
+    .filter_map(role)
+    .collect();
+    let grid: Vec<AppRef> = [role(apps::Role::Gallery), of_package("com.android.vending")]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let locale = current_locale();
+    let mut google = Vec::new();
+    let mut social = Vec::new();
+    let mut games = Vec::new();
+    for app in &installed {
+        let package = app.package_name.as_str();
+        if app.category == apps::CATEGORY_GAME {
+            games.push(to_ref(app));
+        } else if app.category == apps::CATEGORY_SOCIAL || SOCIAL_PACKAGES.contains(&package) {
+            social.push(to_ref(app));
+        } else if package.starts_with("com.google.") || package == "com.android.chrome" {
+            google.push(to_ref(app));
+        }
+    }
+    let folders = vec![
+        (GOOGLE_FOLDER_TITLE.to_owned(), google),
+        (
+            rust_i18n::t!("home.folder_social", locale = locale.as_str()).into_owned(),
+            social,
+        ),
+        (
+            rust_i18n::t!("home.folder_games", locale = locale.as_str()).into_owned(),
+            games,
+        ),
+    ];
+    Ok((dock, grid, folders))
+}
+
 /// Reloads the config, the installed apps and the system look into the main
 /// window.
 fn refresh(window: &MainWindow) -> Result<()> {
     let mut config = config::load()?;
+    // First run: Home starts with the usual apps instead of blank.
+    if !config.home_seeded {
+        let (dock, grid, folders) = default_home()?;
+        config = config::update(|config| config.seed_home(dock, grid, folders))?;
+    }
     // e.g. the Home grid was made smaller in Settings (another process).
     if config.clone().normalize() {
         config = config::update(|config| {

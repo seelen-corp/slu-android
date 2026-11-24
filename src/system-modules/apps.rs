@@ -24,10 +24,35 @@ pub struct AppInfo {
     pub title: String,
     /// False for system apps, which the user can't uninstall.
     pub uninstallable: bool,
+    /// `ApplicationInfo.category` (`CATEGORY_GAME` also for apps flagged as
+    /// games), declared by the app itself; `CATEGORY_UNDEFINED` (-1) if not.
+    pub category: i32,
 }
 
 /// `ApplicationInfo.FLAG_SYSTEM`.
 const FLAG_SYSTEM: i32 = 1;
+/// `ApplicationInfo.FLAG_IS_GAME` (deprecated in favor of the category, still
+/// set by older games).
+const FLAG_IS_GAME: i32 = 1 << 25;
+/// `ApplicationInfo.CATEGORY_GAME`.
+pub const CATEGORY_GAME: i32 = 0;
+/// `ApplicationInfo.CATEGORY_SOCIAL`.
+pub const CATEGORY_SOCIAL: i32 = 4;
+/// `PackageManager.MATCH_DEFAULT_ONLY`.
+const MATCH_DEFAULT_ONLY: i32 = 0x0001_0000;
+/// Package of the system's "choose an app" dialog, what `resolveActivity`
+/// returns when there's no default handler.
+const RESOLVER_PACKAGE: &str = "android";
+
+/// A job usually done by one app, picked by the user or preinstalled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Phone,
+    Messages,
+    Browser,
+    Camera,
+    Gallery,
+}
 
 /// `Intent.FLAG_ACTIVITY_NEW_TASK`: required when starting an Activity of
 /// another app from the launcher.
@@ -136,6 +161,213 @@ pub fn uninstall(package_name: &str) -> Result<()> {
     let mut env = ctx.vm.attach_current_thread()?;
     let intent = package_intent(&mut env, "android.intent.action.DELETE", package_name)?;
     start_activity(&mut env, ctx.activity.as_obj(), &intent)
+}
+
+/// Package of the app that does `role`: the default one if the user (or the
+/// system) picked it, otherwise the first that can. `None` if no app can.
+pub fn role_package(role: Role) -> Result<Option<String>> {
+    android_ctx::with_activity(|env, activity| {
+        let pm = env
+            .call_method(
+                activity,
+                "getPackageManager",
+                "()Landroid/content/pm/PackageManager;",
+                &[],
+            )?
+            .l()?;
+        for intent in role_intents(env, role)? {
+            if let Some(package) = resolve_package(env, &pm, &intent)? {
+                return Ok(Some(package));
+            }
+        }
+        Ok(None)
+    })
+}
+
+/// Intents only handled by apps doing `role`, most reliable first.
+fn role_intents<'local>(env: &mut JNIEnv<'local>, role: Role) -> Result<Vec<JObject<'local>>> {
+    const MAIN: &str = "android.intent.action.MAIN";
+    const VIEW: &str = "android.intent.action.VIEW";
+    let intents = match role {
+        Role::Phone => vec![role_intent(
+            env,
+            "android.intent.action.DIAL",
+            None,
+            None,
+            None,
+        )?],
+        Role::Messages => vec![
+            role_intent(
+                env,
+                "android.intent.action.SENDTO",
+                Some("smsto:"),
+                None,
+                None,
+            )?,
+            role_intent(
+                env,
+                MAIN,
+                None,
+                None,
+                Some("android.intent.category.APP_MESSAGING"),
+            )?,
+        ],
+        Role::Browser => vec![
+            role_intent(
+                env,
+                VIEW,
+                Some("https://"),
+                None,
+                Some("android.intent.category.BROWSABLE"),
+            )?,
+            role_intent(
+                env,
+                MAIN,
+                None,
+                None,
+                Some("android.intent.category.APP_BROWSER"),
+            )?,
+        ],
+        Role::Camera => vec![
+            role_intent(
+                env,
+                "android.media.action.STILL_IMAGE_CAMERA",
+                None,
+                None,
+                None,
+            )?,
+            role_intent(env, "android.media.action.IMAGE_CAPTURE", None, None, None)?,
+        ],
+        Role::Gallery => vec![
+            role_intent(
+                env,
+                MAIN,
+                None,
+                None,
+                Some("android.intent.category.APP_GALLERY"),
+            )?,
+            role_intent(
+                env,
+                VIEW,
+                Some("content://media/external/images/media/1"),
+                Some("image/*"),
+                None,
+            )?,
+        ],
+    };
+    Ok(intents)
+}
+
+/// `new Intent(action)` with an optional data URI, MIME type and category.
+fn role_intent<'local>(
+    env: &mut JNIEnv<'local>,
+    action: &str,
+    data: Option<&str>,
+    mime: Option<&str>,
+    category: Option<&str>,
+) -> Result<JObject<'local>> {
+    let action = env.new_string(action)?;
+    let intent = env.new_object(
+        "android/content/Intent",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&action)],
+    )?;
+    let uri = match data {
+        Some(data) => {
+            let data = env.new_string(data)?;
+            env.call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&data)],
+            )?
+            .l()?
+        }
+        None => JObject::null(),
+    };
+    if let Some(mime) = mime {
+        let mime = env.new_string(mime)?;
+        env.call_method(
+            &intent,
+            "setDataAndType",
+            "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&uri), JValue::Object(&mime)],
+        )?;
+    } else if !uri.is_null() {
+        env.call_method(
+            &intent,
+            "setData",
+            "(Landroid/net/Uri;)Landroid/content/Intent;",
+            &[JValue::Object(&uri)],
+        )?;
+    }
+    if let Some(category) = category {
+        let category = env.new_string(category)?;
+        env.call_method(
+            &intent,
+            "addCategory",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&category)],
+        )?;
+    }
+    Ok(intent)
+}
+
+/// The default handler of `intent`, or else the first one (never the system's
+/// "choose an app" dialog).
+fn resolve_package(env: &mut JNIEnv, pm: &JObject, intent: &JObject) -> Result<Option<String>> {
+    let default = env
+        .call_method(
+            pm,
+            "resolveActivity",
+            "(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;",
+            &[JValue::Object(intent), JValue::Int(MATCH_DEFAULT_ONLY)],
+        )?
+        .l()?;
+    if !default.is_null()
+        && let Some(package) = activity_package(env, &default)?
+    {
+        return Ok(Some(package));
+    }
+    // Category intents (e.g. `APP_GALLERY`) don't match as default ones.
+    let list = env
+        .call_method(
+            pm,
+            "queryIntentActivities",
+            "(Landroid/content/Intent;I)Ljava/util/List;",
+            &[JValue::Object(intent), JValue::Int(0)],
+        )?
+        .l()?;
+    let size = env.call_method(&list, "size", "()I", &[])?.i()?;
+    for i in 0..size {
+        let info = env
+            .call_method(&list, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+            .l()?;
+        if let Some(package) = activity_package(env, &info)? {
+            return Ok(Some(package));
+        }
+    }
+    Ok(None)
+}
+
+/// Package of a `ResolveInfo`'s activity, unless it's the system resolver.
+fn activity_package(env: &mut JNIEnv, resolve_info: &JObject) -> Result<Option<String>> {
+    let activity_info = env
+        .get_field(
+            resolve_info,
+            "activityInfo",
+            "Landroid/content/pm/ActivityInfo;",
+        )?
+        .l()?;
+    if activity_info.is_null() {
+        return Ok(None);
+    }
+    let package: JString = env
+        .get_field(&activity_info, "packageName", "Ljava/lang/String;")?
+        .l()?
+        .into();
+    let package: String = env.get_string(&package)?.into();
+    Ok((package != RESOLVER_PACKAGE).then_some(package))
 }
 
 /// `new Intent(action, Uri.parse("package:" + package_name))`.
@@ -332,6 +564,10 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
             .l()?;
         let flags = env.get_field(&application_info, "flags", "I")?.i()?;
         let uninstallable = flags & FLAG_SYSTEM == 0;
+        let category = match flags & FLAG_IS_GAME {
+            0 => env.get_field(&application_info, "category", "I")?.i()?,
+            _ => CATEGORY_GAME,
+        };
 
         let label = env
             .call_method(
@@ -352,6 +588,7 @@ fn query_launchable_apps(env: &mut JNIEnv, activity: &JObject) -> Result<Vec<App
             activity_name,
             title,
             uninstallable,
+            category,
         });
     }
 
